@@ -49,7 +49,7 @@ wrote_description = false;  % track if exporter wrote dataset_description
 vhdr_files = dir(fullfile(path_rawdata, '*.vhdr'));
 
 %% LOOP OVER FILES AND ORGANIZE INTO BIDS
-for k = 42:numel(vhdr_files)
+for k = 1:numel(vhdr_files)
 
     src_vhdr = vhdr_files(k).name;
     tokens   = regexp(src_vhdr, re_vhdr, 'tokens', 'once');
