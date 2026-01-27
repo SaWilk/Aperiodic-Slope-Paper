@@ -14,81 +14,118 @@
 %   - Run ICA on the ICA-prepared dataset (default runica extended; AMICA optional)
 %   - If channels were interpolated prior to ICA, reduce rank by number interpolated (prereg)
 %   - Transfer ICA weights to the PRE-ICA dataset (original high-pass 0.01)
-%   - (optional) re-reference to average (DEFAULT ON for ERP use; excludes non-EEG from reference)
 %   - Save to:
 %       ...\04_after_ica\<sub>\*_ica_applied.set
 %   - Append all steps to EEG.comments
 %   - Save run records to scripts/logs and a composite report to MATRICS/reports
-
-%% TOOLBOXES / PLUG-INs
-% (1) EEGLAB (v2023.1 & 2025.1)
-% (2) AMICA plugin (optional) - runamica15
-
-%%
+%
+% IMPORTANT NOTE (Jan 2026):
+%   - AMICA on Windows can fail if EEGLAB/AMICA is installed in a path that contains spaces
+%     (internal system calls may not quote paths properly).
+%   - If you want AMICA: ensure PATH_EEGLAB (and the AMICA plugin path) contain NO spaces.
+%     Otherwise, remove spaces from the installation path or switch config.ica_method to "runica".
 
 clear all; close all; clc;
 
 %% =========================
-%  CONFIG 
+%  CONFIG
 %  =========================
 config = struct();
 
 % ICA method
 % options: "runica" (default) | "amica"
-config.ica_method                 = "amica";
+config.ica_method                   = "amica";
 
 % runica parameters
-config.use_extended_infomax        = true;
-config.interrupt_ica               = 'on';
+config.use_extended_infomax         = true;
+config.interrupt_ica                = 'on';  % used only for runica
 
 % Rank handling (prereg): reduce by number of interpolated channels (if any)
 config.use_pca_rank_if_interpolated = true;
-
 
 %% =========================
 %  DEFINE FOLDERS
 %  =========================
 
-this_file = matlab.desktop.editor.getActiveFilename();
-this_dir  = fileparts(this_file);
+THIS_FILE = matlab.desktop.editor.getActiveFilename();
+THIS_DIR  = fileparts(THIS_FILE);
 
-config_dir = fullfile(this_dir, 'config');
-logs_dir   = fullfile(this_dir, 'logs');
+CONFIG_DIR = fullfile(THIS_DIR, 'config');
+LOGS_DIR   = fullfile(THIS_DIR, 'logs');
 
-if ~exist(config_dir,'dir'); mkdir(config_dir); end
-if ~exist(logs_dir,'dir');   mkdir(logs_dir);   end
+if ~exist(CONFIG_DIR,'dir'); mkdir(CONFIG_DIR); end
+if ~exist(LOGS_DIR,'dir');   mkdir(LOGS_DIR);   end
 
-base_path = fileparts(fileparts(fileparts(this_dir)));
+% go up 3 levels (match your project style)
+BASE_PATH   = fileparts(fileparts(fileparts(THIS_DIR)));
 
-path_eeglab = [base_path, '\MATLAB\eeglab_current\eeglab2025.1.0'];
+% EEGLAB path
+PATH_EEGLAB = fullfile(BASE_PATH, 'MATLAB', 'eeglab_current', 'eeglab2025.1.0');
 
-OUTPUT_ROOT_MATRICS = 'K:\Wilken Arbeitsordner\Preprocessed_data\MATRICS';
+% MATRICS root
+OUTPUT_ROOT_MATRICS   = fullfile(BASE_PATH, 'Preprocessed_data', 'MATRICS', 'eeg');
 
-INPUT_DIR_FOR_ICA    = fullfile(OUTPUT_ROOT_MATRICS, '03_for_ica');
-INPUT_DIR_PRE_ICA    = fullfile(OUTPUT_ROOT_MATRICS, '02_until_ica');
-OUTPUT_DIR_AFTER_ICA = fullfile(OUTPUT_ROOT_MATRICS, '04_after_ica');
-OUTPUT_DIR_REPORTS   = fullfile(OUTPUT_ROOT_MATRICS, 'reports');
+INPUT_DIR_FOR_ICA     = fullfile(OUTPUT_ROOT_MATRICS, '03_for_ica');
+INPUT_DIR_PRE_ICA     = fullfile(OUTPUT_ROOT_MATRICS, '02_until_ica');
+
+% IMPORTANT: output folder depends on ICA choice:
+% - AMICA => 04_after_ica
+% - Infomax (runica with extended) => 04_after_ica_infomax
+if string(config.ica_method) == "runica" && config.use_extended_infomax
+    OUTPUT_DIR_AFTER_ICA = fullfile(OUTPUT_ROOT_MATRICS, '04_after_ica_infomax');
+else
+    OUTPUT_DIR_AFTER_ICA = fullfile(OUTPUT_ROOT_MATRICS, '04_after_ica');
+end
+
+OUTPUT_DIR_REPORTS    = fullfile(OUTPUT_ROOT_MATRICS, 'reports');
 
 if ~exist(OUTPUT_DIR_AFTER_ICA,'dir'); mkdir(OUTPUT_DIR_AFTER_ICA); end
 if ~exist(OUTPUT_DIR_REPORTS,'dir');   mkdir(OUTPUT_DIR_REPORTS);   end
 
 %% SAVE CONFIG (MAT + JSON) INTO ./config
-config_mat_path  = fullfile(config_dir, 'config_04_run_ica.mat');
-save(config_mat_path, 'config');
+CONFIG_MAT_PATH  = fullfile(CONFIG_DIR, 'config_04_run_ica.mat');
+save(CONFIG_MAT_PATH, 'config');
 
-config_json_path = fullfile(config_dir, 'config_04_run_ica.json');
+CONFIG_JSON_PATH = fullfile(CONFIG_DIR, 'config_04_run_ica.json');
 try
-    fid = fopen(config_json_path, 'w');
+    fid = fopen(CONFIG_JSON_PATH, 'w');
     fwrite(fid, jsonencode(config, 'PrettyPrint', true), 'char');
     fclose(fid);
 catch
     warning('Could not write JSON config. MAT file was saved.');
 end
 
-%% START EEGLAB ONCE
-cd(path_eeglab);
-eeglab nogui;
-eeglab redraw
+%% START EEGLAB ONCE (NO RESTARTS IN LOOPS)
+% Important: running EEGLAB initializes plugins (including AMICA) and adds them to path
+cd(PATH_EEGLAB);
+[ALLEEG, EEG, CURRENTSET, ALLCOM] = eeglab('nogui'); %#ok<NASGU,ASGLU>
+
+%% AMICA GUARD (AFTER EEGLAB INIT): require no spaces + plugin available
+if string(config.ica_method) == "amica"
+
+    if contains(PATH_EEGLAB, ' ')
+        error(['AMICA requested (config.ica_method="amica"), but EEGLAB is installed in a path that contains spaces:\n' ...
+               '  PATH_EEGLAB = %s\n\n' ...
+               'AMICA on Windows can fail when EEGLAB/AMICA paths contain spaces.\n' ...
+               'Fix: reinstall/move EEGLAB (and AMICA plugin) to a no-space path (e.g., C:\\MATLAB\\eeglab\\...)\n' ...
+               'OR switch to RUNICA by setting: config.ica_method = "runica";'], PATH_EEGLAB);
+    end
+
+    AMICA_SCRIPT_PATH = which('runamica15');
+    if isempty(AMICA_SCRIPT_PATH)
+        error(['AMICA requested (config.ica_method="amica") but runamica15 was not found on the MATLAB path.\n' ...
+               'This usually means the AMICA plugin is not installed/enabled in EEGLAB.\n\n' ...
+               'Fix: install/enable the AMICA plugin in EEGLAB, or switch to RUNICA:\n' ...
+               '  config.ica_method = "runica";']);
+    end
+
+    if contains(AMICA_SCRIPT_PATH, ' ')
+        error(['AMICA requested (config.ica_method="amica"), but the AMICA plugin is located in a path that contains spaces:\n' ...
+               '  runamica15 path = %s\n\n' ...
+               'Fix: move/reinstall EEGLAB+AMICA so that their paths contain no spaces,\n' ...
+               'OR switch to RUNICA (config.ica_method="runica").'], AMICA_SCRIPT_PATH);
+    end
+end
 
 %% SUBJECT IDS FROM 03_for_ica
 ds = dir(INPUT_DIR_FOR_ICA);
@@ -102,17 +139,17 @@ ica_run_records = [];
 %% =========================
 %  MAIN LOOP
 %  =========================
-for subject_index = 1:3%length(subject_ids)
+for subject_index = 2:min(3, numel(subject_ids)) % CHANGE to 1:numel(subject_ids) for all
 
     subject_id = subject_ids{subject_index};
 
-    subject_in_dir_for_ica = fullfile(INPUT_DIR_FOR_ICA, subject_id);
-    subject_in_dir_pre_ica = fullfile(INPUT_DIR_PRE_ICA, subject_id);
-    subject_out_dir_after  = fullfile(OUTPUT_DIR_AFTER_ICA, subject_id);
+    SUBJECT_IN_DIR_FOR_ICA = fullfile(INPUT_DIR_FOR_ICA, subject_id);
+    SUBJECT_IN_DIR_PRE_ICA = fullfile(INPUT_DIR_PRE_ICA, subject_id);
+    SUBJECT_OUT_DIR_AFTER  = fullfile(OUTPUT_DIR_AFTER_ICA, subject_id);
 
-    if ~exist(subject_out_dir_after,'dir'); mkdir(subject_out_dir_after); end
+    if ~exist(SUBJECT_OUT_DIR_AFTER,'dir'); mkdir(SUBJECT_OUT_DIR_AFTER); end
 
-    forica_sets = dir(fullfile(subject_in_dir_for_ica, '*_forica.set'));
+    forica_sets = dir(fullfile(SUBJECT_IN_DIR_FOR_ICA, '*_forica.set'));
     if isempty(forica_sets)
         fprintf('Skipping %s: no *_forica.set files found.\n', subject_id);
         continue;
@@ -120,32 +157,29 @@ for subject_index = 1:3%length(subject_ids)
 
     for file_index = 1:numel(forica_sets)
 
-        eeglab redraw
+        FORICA_SET_NAME = forica_sets(file_index).name;
+        RUN_BASE_NAME   = erase(FORICA_SET_NAME, '_forica.set');
 
-        forica_set_name = forica_sets(file_index).name;
-        run_base_name = erase(forica_set_name, '_forica.set');
+        PREICA_SET_NAME = [RUN_BASE_NAME '_preica.set'];
+        PREICA_SET_PATH = fullfile(SUBJECT_IN_DIR_PRE_ICA, PREICA_SET_NAME);
 
-        preica_set_name = [run_base_name '_preica.set'];
-        preica_set_path = fullfile(subject_in_dir_pre_ica, preica_set_name);
-
-        if ~exist(preica_set_path, 'file')
-            fprintf('Skipping %s (%s): missing pre-ica dataset: %s\n', subject_id, run_base_name, preica_set_path);
+        if ~exist(PREICA_SET_PATH, 'file')
+            fprintf('Skipping %s (%s): missing pre-ica dataset: %s\n', subject_id, RUN_BASE_NAME, PREICA_SET_PATH);
             continue;
         end
 
-        [ALLEEG, EEG, CURRENTSET, ALLCOM] = eeglab; 
-
-        ica_prep_eeg = pop_loadset('filename', forica_set_name, 'filepath', subject_in_dir_for_ica);
+        % Load datasets
+        ica_prep_eeg = pop_loadset('filename', FORICA_SET_NAME, 'filepath', SUBJECT_IN_DIR_FOR_ICA);
         ica_prep_eeg = eeg_checkset(ica_prep_eeg);
 
-        preica_eeg  = pop_loadset('filename', preica_set_name, 'filepath', subject_in_dir_pre_ica);
+        preica_eeg  = pop_loadset('filename', PREICA_SET_NAME, 'filepath', SUBJECT_IN_DIR_PRE_ICA);
         preica_eeg  = eeg_checkset(preica_eeg);
 
         ica_prep_eeg = append_to_eeg_comments(ica_prep_eeg, '--- run ICA (Saskia Wilken, Jan 2026) ---');
         preica_eeg   = append_to_eeg_comments(preica_eeg,   '--- apply ICA weights (Saskia Wilken, Jan 2026) ---');
 
-        ica_prep_eeg = append_to_eeg_comments(ica_prep_eeg, sprintf('loaded ica-prep dataset: %s', forica_set_name));
-        preica_eeg   = append_to_eeg_comments(preica_eeg,   sprintf('loaded pre-ica dataset: %s', preica_set_name));
+        ica_prep_eeg = append_to_eeg_comments(ica_prep_eeg, sprintf('loaded ica-prep dataset: %s', FORICA_SET_NAME));
+        preica_eeg   = append_to_eeg_comments(preica_eeg,   sprintf('loaded pre-ica dataset: %s', PREICA_SET_NAME));
 
         %% DETERMINE INTERPOLATED COUNT (PREREG LOGIC)
         interpolated_count = 0;
@@ -153,18 +187,17 @@ for subject_index = 1:3%length(subject_ids)
                 && ~isempty(preica_eeg.etc.interpolated_channel_indices)
             interpolated_count = numel(preica_eeg.etc.interpolated_channel_indices);
         elseif isfield(preica_eeg, 'chaninfo') && isfield(preica_eeg.chaninfo, 'bad') && ~isempty(preica_eeg.chaninfo.bad)
-            % fallback: if chaninfo.bad exists, and interpolation was prereg default, this is often identical
             interpolated_count = numel(preica_eeg.chaninfo.bad);
         end
 
-        use_pca = false;
+        use_pca  = false;
         pca_rank = [];
 
         if config.use_pca_rank_if_interpolated && interpolated_count > 0
-            use_pca = true;
+            use_pca  = true;
             pca_rank = max(ica_prep_eeg.nbchan - interpolated_count, 1);
-            ica_prep_eeg = append_to_eeg_comments(ica_prep_eeg, sprintf('ICA rank reduction (prereg): interpolated_count=%d => pca_rank=%d', ...
-                interpolated_count, pca_rank));
+            ica_prep_eeg = append_to_eeg_comments(ica_prep_eeg, sprintf( ...
+                'ICA rank reduction (prereg): interpolated_count=%d => pca_rank=%d', interpolated_count, pca_rank));
         else
             ica_prep_eeg = append_to_eeg_comments(ica_prep_eeg, 'ICA: no PCA rank reduction applied.');
         end
@@ -173,23 +206,23 @@ for subject_index = 1:3%length(subject_ids)
         ica_rank_used = ica_prep_eeg.nbchan;
 
         switch config.ica_method
-            case "amica"
-                if exist('runamica15','file') ~= 2
-                    error('config.ica_method="amica" but runamica15 is not available (AMICA plugin missing).');
-                end
 
+            case "amica"
                 % Prepare data matrix for AMICA (channels x samples)
                 x = double(reshape(ica_prep_eeg.data, ica_prep_eeg.nbchan, ica_prep_eeg.pnts * ica_prep_eeg.trials));
 
                 if use_pca
                     pcakeep = pca_rank;
                 else
-                    pcakeep = rank(x'); % conservative fallback if no getrank() available
+                    pcakeep = rank(x');
                 end
 
+                % Run AMICA (requires no spaces in EEGLAB/AMICA install paths)
                 [ica_prep_eeg.icaweights, ica_prep_eeg.icasphere, mods] = runamica15( ...
-                    x, 'pcakeep', pcakeep);
+                    x, ...
+                    'pcakeep', pcakeep);
 
+                % Compute mixing matrix
                 ica_prep_eeg.icawinv = pinv(ica_prep_eeg.icaweights * ica_prep_eeg.icasphere);
                 ica_rank_used = pcakeep;
 
@@ -197,14 +230,15 @@ for subject_index = 1:3%length(subject_ids)
                 ica_prep_eeg = append_to_eeg_comments(ica_prep_eeg, sprintf('AMICA completed. rank used: %d', ica_rank_used));
 
             otherwise
+                % RUNICA
                 if use_pca
-                    ica_prep_eeg = pop_runica(ica_prep_eeg, 'pca', pca_rank, 'interupt', config.interrupt_ica);
+                    ica_prep_eeg = pop_runica(ica_prep_eeg, 'pca', pca_rank, 'interrupt', config.interrupt_ica);
                     ica_rank_used = pca_rank;
                 else
                     if config.use_extended_infomax
-                        ica_prep_eeg = pop_runica(ica_prep_eeg, 'extended', 1, 'interupt', config.interrupt_ica);
+                        ica_prep_eeg = pop_runica(ica_prep_eeg, 'extended', 1, 'interrupt', config.interrupt_ica);
                     else
-                        ica_prep_eeg = pop_runica(ica_prep_eeg, 'interupt', config.interrupt_ica);
+                        ica_prep_eeg = pop_runica(ica_prep_eeg, 'interrupt', config.interrupt_ica);
                     end
                     ica_rank_used = ica_prep_eeg.nbchan;
                 end
@@ -220,17 +254,17 @@ for subject_index = 1:3%length(subject_ids)
         preica_eeg.icachansind = ica_prep_eeg.icachansind;
 
         preica_eeg = eeg_checkset(preica_eeg);
-        preica_eeg = append_to_eeg_comments(preica_eeg, sprintf('ICA weights transferred from: %s', forica_set_name));
+        preica_eeg = append_to_eeg_comments(preica_eeg, sprintf('ICA weights transferred from: %s', FORICA_SET_NAME));
         preica_eeg = append_to_eeg_comments(preica_eeg, 'NOTE: component rejection (pop_subcomp) not performed in this script yet.');
 
         %% SAVE AFTER-ICA DATASET
-        after_ica_set_name = [run_base_name '_ica_applied.set'];
-        preica_eeg = pop_saveset(preica_eeg, 'filename', after_ica_set_name, 'filepath', subject_out_dir_after);
+        AFTER_ICA_SET_NAME = [RUN_BASE_NAME '_ica_applied.set'];
+        preica_eeg = pop_saveset(preica_eeg, 'filename', AFTER_ICA_SET_NAME, 'filepath', SUBJECT_OUT_DIR_AFTER);
 
         %% RUN RECORD
         ica_run_record = struct();
         ica_run_record.subject_id = subject_id;
-        ica_run_record.run_base_name = run_base_name;
+        ica_run_record.run_base_name = RUN_BASE_NAME;
         ica_run_record.ica_method = string(config.ica_method);
 
         ica_run_record.interpolated_count = interpolated_count;
@@ -239,22 +273,22 @@ for subject_index = 1:3%length(subject_ids)
 
         ica_run_records = [ica_run_records; ica_run_record]; %#ok<AGROW>
 
-        fprintf('DONE ICA: %s | %s\n', subject_id, run_base_name);
+        fprintf('DONE ICA: %s | %s\n', subject_id, RUN_BASE_NAME);
 
     end
 end
 
 %% SAVE RUN RECORDS TO ./logs
 timestamp_str = datestr(now, 'yyyymmdd_HHMMSS');
-ica_records_mat_path = fullfile(logs_dir, ['run_records_04_after_ica_' timestamp_str '.mat']);
-save(ica_records_mat_path, 'ica_run_records', 'config');
+ICA_RECORDS_MAT_PATH = fullfile(LOGS_DIR, ['run_records_04_after_ica_' timestamp_str '.mat']);
+save(ICA_RECORDS_MAT_PATH, 'ica_run_records', 'config');
 
 %% WRITE ICA COMPOSITE REPORT
-report_path = fullfile(OUTPUT_DIR_REPORTS, 'summary_04_after_ica.txt');
-write_ica_composite_summary_report(report_path, ica_run_records, config);
+REPORT_PATH = fullfile(OUTPUT_DIR_REPORTS, 'summary_04_after_ica.txt');
+write_ica_composite_summary_report(REPORT_PATH, ica_run_records, config);
 
-fprintf('\nICA report written to:\n%s\n', report_path);
-fprintf('ICA run records saved to:\n%s\n', ica_records_mat_path);
+fprintf('\nICA report written to:\n%s\n', REPORT_PATH);
+fprintf('ICA run records saved to:\n%s\n', ICA_RECORDS_MAT_PATH);
 
 %% =================
 %  LOCAL FUNCTIONS

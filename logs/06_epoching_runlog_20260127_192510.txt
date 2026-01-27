@@ -1,0 +1,4 @@
+[2026-01-27 19:25:10] === START 06_epoching ===
+[2026-01-27 19:25:10] Script: Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\Aperiodic-Slope-Paper\PROOF_EEG_CF_prep06_epoching.m
+[2026-01-27 19:25:10] cfg.reference_mode: avg
+[2026-01-27 19:25:11] Final output filename template: <run_base>_epoched_final.set

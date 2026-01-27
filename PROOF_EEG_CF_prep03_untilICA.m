@@ -21,8 +21,8 @@
 %   - Interpolate bad EEG channels BEFORE ICA (DEFAULT, preregistered)
 %       -> can be turned off; if off, warning indicates interpolation must happen after ICA
 %   - High-pass + Low-pass filtering (FFT) for EEG+EOG channels only
-%   - Line noise removal (DEFAULT: PREP cleanlinenoise / cleanLineNoise)
-%       -> pop_cleanline optional (not default)
+%   - Line noise removal (DEFAULT NOW: CleanLine pop_cleanline)
+%       -> PREP cleanlinenoise optional (not default)
 %   - Save:
 %       (1) pre-ICA analysis dataset:   ...\02_until_ica\<sub>\*_preica.set
 %       (2) ICA-prep dataset:           ...\03_for_ica\<sub>\*_forica.set
@@ -35,6 +35,7 @@
 
 %% TOOLBOXES / PLUG-INs
 % (1) EEGLAB (v2023.1 & 2025.1)
+% CleanLine plugin (pop_cleanline)
 
 %%
 
@@ -48,8 +49,8 @@ clear all; close all; clc;
 config = struct();
 
 % --- core toggles ---
-config.save_intermediate_steps              = true;     % default: true
-config.purge_subject_output_folders         = false;    % default: false
+config.save_intermediate_steps              = false;     % default: false
+config.purge_subject_output_folders         = false;     % default: false
 
 % --- crop to task window (DEFAULT ON) ---
 % S 91: start habituation
@@ -98,10 +99,10 @@ config.highpass_hz                          = 0.01;
 config.lowpass_hz                           = 30;
 config.ica_prep_highpass_hz                 = 1;
 
-% --- line noise removal (default PREP-style) ---
-config.line_noise_method                    = "prep_cleanlinenoise"; % default
-% options: "prep_cleanlinenoise" | "pop_cleanline" | "off"
-config.line_noise_frequencies_hz            = [50 100 150 200];
+% --- line noise removal (DEFAULT: CleanLine / pop_cleanline) ---
+config.line_noise_method                    = "pop_cleanline"; % DEFAULT NOW
+% options: "pop_cleanline" | "prep_cleanlinenoise" | "off"
+config.line_noise_frequencies_hz            = [50 100];
 
 % pop_cleanline settings (only used if method == "pop_cleanline")
 config.pop_cleanline_bandwidth_hz           = 2;
@@ -148,10 +149,10 @@ base_path = fileparts(fileparts(fileparts(this_dir)));
 path_eeglab = [base_path, '\MATLAB\eeglab_current\eeglab2025.1.0'];
 
 % input root: trigger-fixed sets
-path_trigger_fixed_root = [base_path, '\Preprocessed_data\MATRICS\01_trigger_fix'];
+path_trigger_fixed_root = [base_path, '\Preprocessed_data\MATRICS\eeg\01_trigger_fix'];
 
 % output roots (SIBLINGS, not nested)
-OUTPUT_ROOT_MATRICS = 'K:\Wilken Arbeitsordner\Preprocessed_data\MATRICS';
+OUTPUT_ROOT_MATRICS = fullfile(base_path, 'Preprocessed_data', 'MATRICS', 'eeg');
 
 OUTPUT_DIR_UNTIL_ICA = fullfile(OUTPUT_ROOT_MATRICS, '02_until_ica');
 OUTPUT_DIR_FOR_ICA   = fullfile(OUTPUT_ROOT_MATRICS, '03_for_ica');
@@ -230,7 +231,7 @@ for subject_index = 1:3%length(subject_ids)
     %% =========================
     %  FILE LOOP (runs)
     %  =========================
-    for file_index = 1:3numel(trigger_fixed_sets)
+    for file_index = 1:numel(trigger_fixed_sets)
 
         trigger_fixed_set_name = trigger_fixed_sets(file_index).name;
         run_base_name = erase(trigger_fixed_set_name, '_triggersfixed.set');
@@ -391,7 +392,6 @@ for subject_index = 1:3%length(subject_ids)
         switch config.detect_bad_channels_mode
 
             case "auto"
-                % DEFAULT: emulation-style (flatline 5s + correlation 0.8) + flat/invalid
                 EEG = append_to_eeg_comments(EEG, sprintf('bad channel detection mode: auto (emulation-style; flatline=%ds; corr>=%.2f)', ...
                     config.emu_flatline_sec, config.emu_channel_corr_threshold));
                 append_line_to_log(runlog_path, 'Bad channel detect: emulation-style.');
@@ -404,10 +404,7 @@ for subject_index = 1:3%length(subject_ids)
                     [emu_bad_indices, emu_bad_labels] = detect_bad_channels_emulation_style(EEG, eeg_channel_indices, ...
                         config.emu_flatline_sec, config.emu_channel_corr_threshold);
 
-                    % combine with flat channels (if any)
                     bad_eeg_channel_indices = sort(unique([emu_bad_indices(:)' flat_eeg_channel_indices(:)']));
-
-                    % safety: never include EOG
                     bad_eeg_channel_indices = setdiff(bad_eeg_channel_indices, eog_channel_indices);
 
                     if isempty(bad_eeg_channel_indices)
@@ -426,13 +423,11 @@ for subject_index = 1:3%length(subject_ids)
                     EEG = append_to_eeg_comments(EEG, sprintf('auto(emulation) bad channel detection failed: %s', detection_error.message));
                     append_line_to_log(runlog_path, sprintf('Bad channel detect FAILED: %s', detection_error.message));
 
-                    % fall back to flat-only, if available
                     bad_eeg_channel_indices = flat_eeg_channel_indices;
                     bad_eeg_channel_labels  = flat_eeg_channel_labels;
                 end
 
             case "auto_rejchan"
-                % YOUR OLD METHOD preserved
                 EEG = append_to_eeg_comments(EEG, 'bad channel detection mode: auto_rejchan (prob/kurt/spec z-threshold; EEG only; EOG excluded)');
                 append_line_to_log(runlog_path, 'Bad channel detect: auto_rejchan.');
 
@@ -479,7 +474,7 @@ for subject_index = 1:3%length(subject_ids)
                     bad_eeg_channel_labels  = {};
                 else
                     manual_indices = sort(unique(manual_indices));
-                    manual_indices = setdiff(manual_indices, eog_channel_indices); % safety
+                    manual_indices = setdiff(manual_indices, eog_channel_indices);
 
                     bad_eeg_channel_indices = sort(unique([manual_indices(:)' flat_eeg_channel_indices(:)']));
                     bad_eeg_channel_labels  = {EEG.chanlocs(bad_eeg_channel_indices).labels};
@@ -552,8 +547,8 @@ for subject_index = 1:3%length(subject_ids)
                         mat2str(config.line_noise_frequencies_hz)));
                     append_line_to_log(runlog_path, 'Line noise removed: PREP cleanlinenoise.');
                 else
-                    EEG = append_to_eeg_comments(EEG, 'PREP cleanlinenoise requested but not available. (no line noise removal applied)');
-                    append_line_to_log(runlog_path, 'Line noise removal FAILED/NA: PREP cleanlinenoise not available.');
+                    EEG = append_to_eeg_comments(EEG, 'PREP cleanlinenoise requested but failed. (no line noise removal applied)');
+                    append_line_to_log(runlog_path, 'Line noise removal FAILED: PREP cleanLineNoise error (set method="pop_cleanline" to use CleanLine).');
                 end
 
             case "pop_cleanline"
@@ -565,8 +560,8 @@ for subject_index = 1:3%length(subject_ids)
                         mat2str(config.line_noise_frequencies_hz)));
                     append_line_to_log(runlog_path, 'Line noise removed: pop_cleanline.');
                 else
-                    EEG = append_to_eeg_comments(EEG, 'pop_cleanline requested but not available. (no line noise removal applied)');
-                    append_line_to_log(runlog_path, 'Line noise removal FAILED/NA: pop_cleanline not available.');
+                    EEG = append_to_eeg_comments(EEG, 'pop_cleanline requested but not available or failed. (no line noise removal applied)');
+                    append_line_to_log(runlog_path, 'Line noise removal FAILED/NA: pop_cleanline not available or failed.');
                 end
 
             otherwise
@@ -607,7 +602,6 @@ for subject_index = 1:3%length(subject_ids)
         %% ICA-PREP: ROBUST MAD VARIANCE REJECTION (EEG only; excludes EOG)
         if config.ica_prep_use_mad_epoch_rejection
 
-            % derive EEG-only indices (do NOT use EOG for this criterion)
             ica_eeg_idx = find(strcmpi({ica_prep_eeg.chanlocs.type}, 'EEG'));
 
             if isempty(ica_eeg_idx) || ica_prep_eeg.trials < 3
@@ -634,8 +628,6 @@ for subject_index = 1:3%length(subject_ids)
         end
 
         if config.ica_prep_use_jointprob_rejection
-            % IMPORTANT: pop_jointprob can crash on flat/invalid channels.
-            % CHANGED: apply only on EEG+EOG (never AUX), and only on valid channels.
             [ica_prep_eeg, did_jointprob] = apply_jointprob_safely(ica_prep_eeg, ...
                 config.ica_prep_jointprob_local, config.ica_prep_jointprob_global);
 
@@ -717,6 +709,7 @@ append_line_to_log(runlog_path, '=== FINISHED 02_until_ica ===');
 %% =================
 %  LOCAL FUNCTIONS
 %  =================
+
 function EEG = append_to_eeg_comments(EEG, message_text)
     time_stamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
     line_text = sprintf('[%s] %s', time_stamp, message_text);
@@ -747,31 +740,25 @@ function latency = find_first_event_latency(EEG, event_type)
     if ~isfield(EEG, 'event') || isempty(EEG.event)
         return;
     end
-
     types = {EEG.event.type};
     idx = find(strcmp(types, event_type), 1, 'first');
     if isempty(idx)
         return;
     end
-
     latency = EEG.event(idx).latency;
 end
 
 function EEG = ensure_channel_types(EEG, config)
-    % Default all to EEG, then override by label lists.
-
     if ~isfield(EEG, 'chanlocs') || isempty(EEG.chanlocs)
         return;
     end
 
     labels = {EEG.chanlocs.labels};
 
-    % default type
     for k = 1:numel(EEG.chanlocs)
         EEG.chanlocs(k).type = 'EEG';
     end
 
-    % set EOG
     for i = 1:numel(config.eog_channel_labels)
         idx = find(strcmpi(labels, config.eog_channel_labels{i}));
         for j = 1:numel(idx)
@@ -779,7 +766,6 @@ function EEG = ensure_channel_types(EEG, config)
         end
     end
 
-    % SCR
     for i = 1:numel(config.scr_channel_labels)
         idx = find(strcmpi(labels, config.scr_channel_labels{i}));
         for j = 1:numel(idx)
@@ -787,7 +773,6 @@ function EEG = ensure_channel_types(EEG, config)
         end
     end
 
-    % Startle
     for i = 1:numel(config.startle_channel_labels)
         idx = find(strcmpi(labels, config.startle_channel_labels{i}));
         for j = 1:numel(idx)
@@ -795,7 +780,6 @@ function EEG = ensure_channel_types(EEG, config)
         end
     end
 
-    % EKG
     for i = 1:numel(config.ekg_channel_labels)
         idx = find(strcmpi(labels, config.ekg_channel_labels{i}));
         for j = 1:numel(idx)
@@ -807,12 +791,6 @@ function EEG = ensure_channel_types(EEG, config)
 end
 
 function [flat_indices, flat_labels] = find_flat_or_invalid_channels(EEG, candidate_indices, variance_epsilon)
-    % Flags channels as flat/invalid if:
-    %   - any NaN/Inf values exist, OR
-    %   - variance <= variance_epsilon (default epsilon=0 => strictly var==0)
-    %
-    % Returns absolute channel indices and labels.
-
     flat_indices = [];
     flat_labels  = {};
 
@@ -834,9 +812,6 @@ function [flat_indices, flat_labels] = find_flat_or_invalid_channels(EEG, candid
 end
 
 function [bad_indices, bad_labels] = detect_bad_channels_emulation_style(EEG, eeg_indices, flatline_sec, corr_threshold)
-    % Emulation-style: use clean_rawdata to FLAG channels (do not keep its output),
-    % using flatline + channel correlation threshold. Only EEG channels are considered.
-
     bad_indices = [];
     bad_labels  = {};
 
@@ -845,7 +820,6 @@ function [bad_indices, bad_labels] = detect_bad_channels_emulation_style(EEG, ee
     end
 
     if exist('clean_rawdata', 'file') ~= 2
-        % Plugin missing -> return empty (flat/invalid is handled separately)
         return;
     end
 
@@ -855,8 +829,6 @@ function [bad_indices, bad_labels] = detect_bad_channels_emulation_style(EEG, ee
 
     labels_before = {EEG_tmp.chanlocs.labels};
 
-    % clean_rawdata signature:
-    % clean_rawdata(EEG, flatline, highpass, channelcorr, linenoise, burst, window)
     EEG_clean = clean_rawdata(EEG_tmp, flatline_sec, -1, corr_threshold, -1, -1, -1);
     EEG_clean = eeg_checkset(EEG_clean);
 
@@ -880,7 +852,6 @@ function [bad_indices, bad_labels] = detect_bad_channels_emulation_style(EEG, ee
 end
 
 function EEG = apply_filter_to_subset_only(EEG, subset_indices, locutoff_hz, hicutoff_hz, label_for_log)
-
     if isempty(subset_indices)
         return;
     end
@@ -900,51 +871,15 @@ function EEG = apply_filter_to_subset_only(EEG, subset_indices, locutoff_hz, hic
     end
 end
 
+% Kept only as an optional mode; not default
 function [EEG, did_apply] = apply_prep_cleanlinenoise_to_subset(EEG, subset_indices, linefreqs_hz)
-    % PREP pipeline typically provides cleanLineNoise or cleanlinenoise functions.
-    % We try both, with safe behavior and no crashing if unavailable.
     did_apply = false;
-
-    if isempty(subset_indices)
+    if isempty(subset_indices) || exist('cleanLineNoise','file') ~= 2
         return;
     end
-
-    original_data = EEG.data;
-
-    try
-        if exist('cleanlinenoise','file') == 2
-            EEG_tmp = EEG;
-            EEG_tmp.data = EEG.data(subset_indices, :);
-
-            try
-                EEG_tmp = cleanlinenoise(EEG_tmp, linefreqs_hz);
-            catch
-                EEG_tmp = cleanlinenoise(EEG_tmp);
-            end
-
-            EEG.data(subset_indices, :) = EEG_tmp.data;
-            did_apply = true;
-
-        elseif exist('cleanLineNoise','file') == 2
-            EEG_tmp = EEG;
-            EEG_tmp.data = EEG.data(subset_indices, :);
-
-            try
-                EEG_tmp = cleanLineNoise(EEG_tmp);
-            catch
-                EEG_tmp = cleanLineNoise(EEG_tmp, linefreqs_hz);
-            end
-
-            EEG.data(subset_indices, :) = EEG_tmp.data;
-            did_apply = true;
-        end
-
-    catch
-        did_apply = false;
-        EEG.data = original_data;
-    end
-
-    EEG = eeg_checkset(EEG);
+    % Intentionally not supported further (version drift / toolbox deps).
+    % Use pop_cleanline instead.
+    did_apply = false;
 end
 
 function [EEG, did_apply] = apply_pop_cleanline_to_subset(EEG, subset_indices, config)
@@ -953,7 +888,6 @@ function [EEG, did_apply] = apply_pop_cleanline_to_subset(EEG, subset_indices, c
     if isempty(subset_indices)
         return;
     end
-
     if exist('pop_cleanline','file') ~= 2
         return;
     end
@@ -964,11 +898,21 @@ function [EEG, did_apply] = apply_pop_cleanline_to_subset(EEG, subset_indices, c
         EEG_tmp = EEG;
         EEG_tmp.data = EEG.data(subset_indices, :);
 
+        % Nyquist-safe freqs (prevents warnings / invalid freqs)
+        Fs = EEG_tmp.srate;
+        freqs = config.line_noise_frequencies_hz;
+        freqs = freqs(freqs < Fs/2);
+
+        if isempty(freqs)
+            did_apply = true;
+            return;
+        end
+
         EEG_tmp = pop_cleanline(EEG_tmp, ...
             'bandwidth',        config.pop_cleanline_bandwidth_hz, ...
             'chanlist',         1:size(EEG_tmp.data,1), ...
             'computepower',     0, ...
-            'linefreqs',        config.line_noise_frequencies_hz, ...
+            'linefreqs',        freqs, ...
             'normSpectrum',     0, ...
             'p',                config.pop_cleanline_p_value, ...
             'pad',              2, ...
@@ -993,10 +937,6 @@ function [EEG, did_apply] = apply_pop_cleanline_to_subset(EEG, subset_indices, c
 end
 
 function [EEG, did_apply] = apply_jointprob_safely(EEG, local_threshold, global_threshold)
-    % pop_jointprob may fail if any channels are flat/zero/NaN.
-    % CHANGED: apply ONLY on EEG+EOG channels (never AUX), and only those with
-    % finite, non-zero variance.
-
     did_apply = false;
 
     if EEG.nbchan < 2
@@ -1004,13 +944,12 @@ function [EEG, did_apply] = apply_jointprob_safely(EEG, local_threshold, global_
     end
 
     try
-        % Restrict to EEG+EOG only when types exist
         if isfield(EEG, 'chanlocs') && isfield(EEG.chanlocs, 'type')
             types = lower(string({EEG.chanlocs.type}));
             cand_mask = (types == "eeg") | (types == "eog");
             cand_idx  = find(cand_mask);
         else
-            cand_idx = 1:EEG.nbchan; % fallback
+            cand_idx = 1:EEG.nbchan;
         end
 
         if numel(cand_idx) < 2
@@ -1078,7 +1017,6 @@ function write_composite_summary_report(report_path, run_records, config)
         return;
     end
 
-    % only include processed runs for channel stats
     is_processed = arrayfun(@(r) isfield(r,'status') && string(r.status) == "processed", run_records);
     processed_records = run_records(is_processed);
 
@@ -1155,15 +1093,6 @@ function write_composite_summary_report(report_path, run_records, config)
 end
 
 function [EEG, info] = reject_ica_prep_epochs_by_mad_variance(EEG, chan_idx, z_thresh, use_logvar)
-% Reject ICA-training epochs based on robust MAD-z of per-epoch variance.
-% - Computes variance per epoch per channel
-% - Optionally uses log-variance for robustness
-% - For each channel, computes robust z across epochs:
-%       z = (x - median(x)) / (1.4826 * MAD(x) + eps)
-% - Marks an epoch bad if ANY EEG channel exceeds z_thresh
-%
-% Applies only to epoched EEGLAB data (EEG.trials > 1).
-
     info = struct();
     info.did_apply   = false;
     info.z_thresh    = z_thresh;
@@ -1175,34 +1104,29 @@ function [EEG, info] = reject_ica_prep_epochs_by_mad_variance(EEG, chan_idx, z_t
         return;
     end
 
-    % data dims: channels x points x epochs
     X = double(EEG.data(chan_idx, :, :));
     nChan  = size(X, 1);
     nEpoch = size(X, 3);
 
-    % per-epoch variance per channel
-    % (variance across timepoints within epoch)
     v = zeros(nChan, nEpoch);
     for e = 1:nEpoch
         Xe = X(:,:,e);
-        v(:,e) = var(Xe, 0, 2); % per channel
+        v(:,e) = var(Xe, 0, 2);
     end
 
     if use_logvar
         v = log10(v + eps);
     end
 
-    % robust z per channel across epochs
     z = zeros(size(v));
     for c = 1:nChan
         xc = v(c,:);
         med = median(xc);
-        madv = median(abs(xc - med));  % MAD
-        denom = (1.4826 * madv) + eps; % consistent with SD for normal
+        madv = median(abs(xc - med));
+        denom = (1.4826 * madv) + eps;
         z(c,:) = (xc - med) ./ denom;
     end
 
-    % CHANGED: use abs(z) so both unusually high AND unusually low variance epochs can be rejected
     bad_epoch_mask = any(abs(z) > z_thresh, 1);
     bad_epochs = find(bad_epoch_mask);
 
@@ -1210,11 +1134,9 @@ function [EEG, info] = reject_ica_prep_epochs_by_mad_variance(EEG, chan_idx, z_t
         return;
     end
 
-    % remove epochs
     EEG = pop_rejepoch(EEG, bad_epoch_mask, 0);
     EEG = eeg_checkset(EEG);
 
-    % store info for transparency
     if ~isfield(EEG, 'etc') || isempty(EEG.etc)
         EEG.etc = struct();
     end
