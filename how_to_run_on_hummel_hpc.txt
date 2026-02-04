@@ -1,0 +1,89 @@
+How to run the EEG preprocessing Pipeline on Hummel HPC 
+By Saskia Wilken
+Creation date: 20.01.2026
+
+Step 1 (only once): Setup Connection
+1. Ask for access at hpc@uni-hamburg.de with your Professor in cc (this is required to verify you are really you)
+2. Install MobaXterm 
+3. Generate a public/private key pair using MobaXGen
+4. Once Access is initialized by the HPC Team, follow instructions in presentation "UHH cluster from Windows" Silde 3-9. 
+Only difference: nowadays we work either on hummel2 or hummel3, not hummel1 like in the power Point
+
+Step 2 (only once): Adjust MATLAB scripts and set up environment
+1. Set the paths in the run_eeg_pipeline.m to wherever the script and Input/Output Folders are located on hummel
+2. Unlike in the presentation, the Folder we Need our data in is under /beegfs/u/<username>/ -> put the BIDS-formatted 
+raw data here in a new Folder /raw
+3. then, put the Pipeline scripts 2-6 along with the run_eeg_pipeline.m function in the /beegfs/u/<username>/ folder
+
+Step 3 (every time): Move to the Right place 
+1. Log into Hummel2/3 by using hte shortcut you creaetd in Step 1.
+2. use the command ssh front1 in the terminal to move away from the welcome node into a workable node. 
+3. Enter module load hummel1 to load the hummel1 Setup that contains executable MATLAB until 2023a
+4. Enter hummel1 to switch to within the Environment you jsut loaded. now you can use matlab etc. if you want to go back to 
+hummel2, type quit
+
+Step: 4 (Only once unless you want to Change something) Setup Evironment
+1. load up nano by typing load module nano
+2. create an file that contains your environment Defaults by typing nano ~/.bashrc
+3. inside the editor, type: 
+export <profile_name>=hpc_hummel
+export <workers_config_name>=24
+export <input_folder_root>=/beegfs/u/<user_name>/raw
+export <output_folder_root>=/beegfs/u/<user_name>/derivatives/<pipeline_name>
+
+Step 5: (every time) Run MATLAB
+1. navigate to your root Folder: cd /beegfs/u/<user_name>
+1. source ~/.bashrc
+2. load matlab by typing module load matlab
+3. run matlab: matlab -nodisplay 
+4. type the name of your pipeline script, in this case run_eeg_pipeline. it calls the preprocessing scripts sequentially
+5. recover Output from the latest Folder within  /beegfs/u/<user_name>/derivatives/
+6. if you want to run the Pipeline with different config Options, download it, edit the config block in the run_eeg_pipeline 
+function at the top and upload it again. Restart matlab on hummel before running it again since the old function is cached 
+
+
+VERSION WITH SLURM (FOR NON-MATLAB USERS)
+
+
+Step 4: make the SLURM Batch
+1. module load nano to load up the SLURM Batch creation tool 
+2. optional: matlab <script_name> can be used to run MATLAB on hummel1, leave back to hummel1 with quit
+3. if you do not know your work_group, type sacctmgr -n -P show assoc where user=bbf7366 format=Account,Partition
+4. create a SLURM Batch file using a command like nano /beegfs/u/<user_name>/run_eeg_pipeline.slurm
+ that runs the run_eeg_pipeline.m function. Like this one: 
+lincoln_std|std
+
+#!/bin/bash
+#SBATCH --job-name=proof_eeg
+#SBATCH --partition=std
+#SBATCH --account=<work_group>
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --time=24:00:00
+#SBATCH --output=/beegfs/u/<user_name>/slurm_logs/%x_%j.out
+#SBATCH --error=/beegfs/u/<user_name>/slurm_logs/%x_%j.err
+#SBATCH --mail-type=NONE
+
+set -euo pipefail
+
+mkdir -p /beegfs/u/bbf7366/slurm_logs
+module load matlab/R2023a
+
+export TMPDIR="${RRZ_GLOBAL_TMPDIR:-/tmp}"
+export MATLAB_PREFDIR="$TMPDIR/matlab_prefs"
+mkdir -p "$MATLAB_PREFDIR"
+
+cd /beegfs/u/bbf7366/path/to/pipeline
+
+matlab -nodisplay -nosplash -r "try, run_eeg_pipeline; catch ME, disp(getReport(ME,'extended','hyperlinks','off')); exit(1); end; exit(0);"
+
+
+5. make it executable using chmod +x /beegfs/u/<user_name>/run_eeg_pipeline
+
+Step 5: Run the Batch 
+1. sbatch /beegfs/u/<user_name>/run_eeg_pipeline
+2. check if it is running/queued squeue -u <user_name> -  if the state is PD or R it means it is being worked on, if it is gone check 
+the ls /beegfs/u/<user_name>/slurm_logs whether it ran successfully or not
+3. you can tail logs live: tail -f /beegfs/u/<user_name>/slurm_logs/proof_eeg_12345678.out or 
+tail -f /beegfs/u/<user_name>/slurm_logs/proof_eeg_12345678.err
