@@ -1,21 +1,36 @@
 function step_out = proof_eeg_cf_prep06_epoching(subj_id, cfg, paths, helpers)
-% PROOF_EEG_CF_PREP06_EPOCHING
-% Epoching + final artifact rejection, single final output by default.
+% PROOF_EEG_CF_PREP06_EPOCHING - PROOF - Classical Paradigm / Saskia Wilken / JAN 2026
 %
-% INPUT:
-%   paths.prep05_out_dir: .../05_until_epoching/sub-xxx/*_until_epoching.set
+% Step 06 of the PROOF Classical-Conditioning EEG preprocessing pipeline.
 %
-% OUTPUT (default):
-%   paths.prep06_out_dir: .../06_epoched/sub-xxx/<run_base>_epoched_final.set
+% Does (short):
+%   - Apply the chosen reference (average OR mastoid; exactly one).
+%   - Epoch continuous EEG around task events.
+%   - Perform final automatic epoch-level artifact rejection (FASTER-style).
+%   - Apply baseline correction.
+%   - Enforce subject-level exclusion if too many epochs are rejected.
+%   - Save ONE final epoched dataset by default.
+%
+% Inputs:
+%   paths.prep05_out_dir
+%     *_until_epoching.set
+%
+% Outputs (default):
+%   paths.prep06_out_dir
+%     *_epoched_final.set
 %
 % Policy:
-%   - reference choice is cfg.prep06.reference_mode (ONLY that one is executed)
-%   - filename does NOT encode reference
-%   - artifact rejection BEFORE baseline
-%   - default prereg FASTER epoch rejection: epoch_properties() + min_z z>3
+%   - Reference choice is cfg.prep06.reference_mode (ONLY that one is executed).
+%   - Artifact rejection is applied BEFORE baseline correction.
+%   - Subject is automatically rejected if rejected-epoch proportion exceeds
+%     cfg.prep06.max_reject_prop (default = 0.25).
 %
-% Returns:
-%   step_out.ok, step_out.message, step_out.outputs
+% Notes:
+%   - Designed to be fully non-interactive and HPC-safe.
+%   - Subject rejection happens AFTER epoch rejection and BEFORE saving final output.
+%
+% MATLAB R2023a | EEGLAB + FASTER required
+
 
 step_out = struct('ok', false, 'message', '', 'outputs', {{}});
 
@@ -169,6 +184,30 @@ try
         if c.save_intermediate_steps && ~c.save_final_only
             fn_rej = fullfile(out_dir, [run_base '_badtrialsrejected.set']);
             safe_saveset(EEGrej, fn_rej, overwrite_mode, cfg, c.savemode, helpers);
+        end
+
+        % =========================
+        % SUBJECT-LEVEL EXCLUSION BASED ON EPOCH LOSS
+        % =========================
+        if c.do_artifact_rejection && isfield(c, 'max_reject_prop') && ~isempty(c.max_reject_prop)
+
+            prop_rejected = 0;
+            if isfield(rej_info,'n_total') && rej_info.n_total > 0
+                prop_rejected = rej_info.n_rejected / rej_info.n_total;
+            end
+
+            if prop_rejected > c.max_reject_prop
+                msg = sprintf(['prep06_epoching: SUBJECT EXCLUDED | rejected %.1f%% of epochs ' ...
+                               '(threshold %.1f%%). No final dataset written.'], ...
+                               100*prop_rejected, 100*c.max_reject_prop);
+
+                EEGrej = helpers.append_eeg_comment(EEGrej, msg);
+                helpers.logmsg_default('prep06_epoching: %s | %s | %s', subj_label, run_base, msg);
+
+                step_out.ok = false;
+                step_out.message = msg;
+                return;
+            end
         end
 
         % =========================

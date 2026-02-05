@@ -24,6 +24,11 @@ function step_out = proof_eeg_cf_prep05_after_ica(subj_id, cfg, paths, helpers)
 %   paths.checks_ica_comps_rej_dir   - rejected IC topographies
 %   paths.checks_ica_comps_edge_dir - edge (non-rejected) IC topographies
 %
+% Notes:
+%   - This step NEVER performs epoching.
+%   - All rejection decisions are logged to EEG.comments and EEG.etc.ic_rejection.
+%   - Designed to be fully non-interactive and HPC-safe.
+%
 % MATLAB R2023a | EEGLAB + ICLabel required
 
 

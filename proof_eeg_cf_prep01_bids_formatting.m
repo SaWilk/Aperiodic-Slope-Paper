@@ -1,10 +1,15 @@
-%% ANALYSIS SCRIPT - EEG - PROOF - Classical Paradigm (Real Data) / Saskia Wilken / BIDS ORGANIZATION / DEZ 2025
+%% ANALYSIS SCRIPT - EEG - PROOF - Classical Paradigm / Saskia Wilken / BIDS ORGANIZATION / DEZ 2025
 % MATLAB 2025b
 
 %% TOOLBOXES / PLUG-INs
 % (1) EEGLAB (2025.1)
 % Delorme A & Makeig S (2004) EEGLAB: an open-source toolbox for analysis of single-trial EEG dynamics,
 % Journal of Neuroscience Methods 134:9-21
+
+%% HOW TO USE
+% Standalone script; put in appropriate ROOT folder and adjust the relative
+% paths to it (you are defining the ROOT folder by putting the script in
+% it)
 
 %%
 
@@ -19,40 +24,39 @@ this_dir   = fileparts(this_file);                                % folder the s
 % Go up 3 levels
 base_path  = fileparts(fileparts(fileparts(this_dir)));
 
-mainpath     = [base_path, '\Paper\2025-11-03 MATRICS Study\MATRICS-Study']; % if you work laptop
-% mainpath   ='C:\Users\metin\Desktop\PROOF_EEGSCRFPS_Analysis\AnalysisHome'; % if you work on Uni comp
-path_eeglab  = [base_path, '\MATLAB\eeglab_current\eeglab2025.1.0'];         % where eeglab is located
-path_rawdata = [base_path, '\Raw_data\'];    % where raw data is located
-path_eeg     = [path_rawdata, 'RTG_Metin_Nilay_EEG_Classic_Task'];
-path_beh     = [path_rawdata, 'RTG_Metin_Nilay_Behav_Classic_Task\fear_learning_logs'];
+MAINPATH     = [base_path, '\Paper\2025-11-03 MATRICS Study\MATRICS-Study']; % if you work laptop
+PATH_EEGLAB  = [base_path, '\MATLAB\eeglab_current\eeglab2025.1.0'];         % where eeglab is located
+PATH_RAWDATA = [base_path, '\Raw_data\'];    % where raw data is located
+PATH_EEG     = [PATH_RAWDATA, 'RTG_Metin_Nilay_EEG_Classic_Task'];
+PATH_BEH     = [PATH_RAWDATA, 'RTG_Metin_Nilay_Behav_Classic_Task\fear_learning_logs'];
 
 % BIDS root will live *inside* the RTG_Metin_Nilay folder
-bids_root    = fullfile(path_rawdata, 'BIDS_RTGMN_Classic');
+bids_root    = fullfile(PATH_RAWDATA, 'BIDS_RTGMN_Classic');
 
 %% CONFIG
 
-task_label    = 'classical';
-session_label = '01';   % all data recorded in session 01
+TASK_LABEL    = 'classical';
+SESSION_LABEL = '01';   % all data recorded in session 01
 
 % Select what to (re-)add to BIDS
-do_eeg   = true;   % if false: assume EEG already BIDS in bids_root, do not copy/rename EEG
-do_beh   = true;   % copy behavioral logs into /beh
-do_other = false;  % placeholder for future modalities (e.g., eye, physio, etc.)
+DO_EEG   = true;   % if false: assume EEG already BIDS in bids_root, do not copy/rename EEG
+DO_BEH   = true;   % copy behavioral logs into /beh
+DO_OTHER = false;  % placeholder for future modalities (e.g., eye, physio, etc.)
 
 % Regex for BrainVision headers:
 % CF_<subject>(_<run>)?.vhdr  e.g., CF_211.vhdr  or CF_211_002.vhdr
-re_vhdr = '^CF_(\d+)(?:_(\d{3}))?\.vhdr$';
+RE_VHDR = '^CF_(\d+)(?:_(\d{3}))?\.vhdr$';
 
 % Regex for behavioral logs:
 % CF_<subject>-<desc>.log   e.g., CF_010-GRK_Cond.log
-re_beh = '^CF_(\d{3})-(.+)\.(log|txt)$';
+RE_BEH = '^CF_(\d{3})-(.+)\.(log|txt)$';
 
-% Regex for existing BIDS EEG headers (when do_eeg == false)
+% Regex for existing BIDS EEG headers (when DO_EEG == false)
 % sub-010_ses-01_task-classical(_run-001)?_eeg.vhdr
-re_bids_vhdr = '^sub-(\d+)_ses-(\d+)_task-([A-Za-z0-9]+)(?:_run-(\d+))?_eeg\.vhdr$';
+RE_BIDS_VHDR = '^sub-(\d+)_ses-(\d+)_task-([A-Za-z0-9]+)(?:_run-(\d+))?_eeg\.vhdr$';
 
 %% START EEGLAB (for metadata export)
-cd(path_eeglab);
+cd(PATH_EEGLAB);
 [ALLEEG, EEG, CURRENTSET, ~] = eeglab;
 
 %% PREP BIDS ROOT
@@ -60,8 +64,8 @@ if ~exist(bids_root, 'dir'); mkdir(bids_root); end
 wrote_description = false;  % track if exporter wrote dataset_description
 
 %% LIST EEG FILES (two modes)
-if do_eeg
-    vhdr_files = dir(fullfile(path_eeg, '*.vhdr'));   % raw BrainVision headers
+if DO_EEG
+    vhdr_files = dir(fullfile(PATH_EEG, '*.vhdr'));   % raw BrainVision headers
 else
     vhdr_files = dir(fullfile(bids_root, '**', '*_eeg.vhdr'));  % already BIDS headers
 end
@@ -69,10 +73,10 @@ end
 %% LOOP OVER FILES AND ORGANIZE INTO BIDS
 for k = 1:numel(vhdr_files)
 
-    if do_eeg
-        % --- RAW -> BIDS mode (your original logic) ---
+    if DO_EEG
+        % --- RAW -> BIDS  ---
         src_vhdr = vhdr_files(k).name;
-        tokens   = regexp(src_vhdr, re_vhdr, 'tokens', 'once');
+        tokens   = regexp(src_vhdr, RE_VHDR, 'tokens', 'once');
         if isempty(tokens); continue; end
 
         subj_num = tokens{1};                                  % e.g., '211'
@@ -86,23 +90,23 @@ for k = 1:numel(vhdr_files)
         end
 
         sub_label = sprintf('sub-%s', subj_num);
-        ses_label = sprintf('ses-%s', session_label);
+        ses_label = sprintf('ses-%s', SESSION_LABEL);
 
         % BIDS destination folders
         eeg_dir   = fullfile(bids_root, sub_label, ses_label, 'eeg');
         if ~exist(eeg_dir, 'dir'); mkdir(eeg_dir); end
 
-        % (beh_dir created below only if do_beh)
+        % (beh_dir created below only if DO_BEH)
 
         % Compose BIDS base filename (run only if present)
-        bids_base = sprintf('%s_%s_task-%s%s', sub_label, ses_label, task_label, run_tag);
+        bids_base = sprintf('%s_%s_task-%s%s', sub_label, ses_label, TASK_LABEL, run_tag);
 
         % Source trio (BrainVision)
         [~, base_noext] = fileparts(src_vhdr);                 % e.g., 'CF_211' or 'CF_211_002'
         src_vmrk = [base_noext '.vmrk'];
 
         % .eeg could be '.eeg' or '.dat' depending on recorder; prefer .eeg if present
-        if exist(fullfile(path_eeg, [base_noext '.eeg']), 'file')
+        if exist(fullfile(PATH_EEG, [base_noext '.eeg']), 'file')
             src_eeg = [base_noext '.eeg'];
         else
             src_eeg = [base_noext '.dat'];
@@ -115,14 +119,14 @@ for k = 1:numel(vhdr_files)
         dst_eeg  = fullfile(eeg_dir, [bids_base '_eeg' eeg_ext]);
 
         % Copy/rename the files
-        copyfile(fullfile(path_eeg, src_vhdr), dst_vhdr);
-        if exist(fullfile(path_eeg, src_vmrk), 'file'); copyfile(fullfile(path_eeg, src_vmrk), dst_vmrk); end
-        if exist(fullfile(path_eeg, src_eeg),  'file'); copyfile(fullfile(path_eeg, src_eeg),  dst_eeg);  end
+        copyfile(fullfile(PATH_EEG, src_vhdr), dst_vhdr);
+        if exist(fullfile(PATH_EEG, src_vmrk), 'file'); copyfile(fullfile(PATH_EEG, src_vmrk), dst_vmrk); end
+        if exist(fullfile(PATH_EEG, src_eeg),  'file'); copyfile(fullfile(PATH_EEG, src_eeg),  dst_eeg);  end
 
         % Rename/relocate the one experiment .log per subject (if present) -> *_events.log
         % looks for CF_<subj>.log or CF_<subj>_*.log (also accepts .txt)
-        log_candidates = [ dir(fullfile(path_eeg, sprintf('CF_%s*.log', subj_num))) ; ...
-                           dir(fullfile(path_eeg, sprintf('CF_%s*.txt', subj_num))) ];
+        log_candidates = [ dir(fullfile(PATH_EEG, sprintf('CF_%s*.log', subj_num))) ; ...
+                           dir(fullfile(PATH_EEG, sprintf('CF_%s*.txt', subj_num))) ];
         if ~isempty(log_candidates)
             src_log = fullfile(log_candidates(1).folder, log_candidates(1).name);
             dst_log = fullfile(eeg_dir, [bids_base '_events.log']);
@@ -130,11 +134,11 @@ for k = 1:numel(vhdr_files)
         end
 
     else
-        % --- ADD-ON mode (EEG already BIDS) ---
+        % --- EEG already BIDS ---
         src_vhdr = vhdr_files(k).name;
         eeg_dir  = vhdr_files(k).folder;
 
-        tokens = regexp(src_vhdr, re_bids_vhdr, 'tokens', 'once');
+        tokens = regexp(src_vhdr, RE_BIDS_VHDR, 'tokens', 'once');
         if isempty(tokens); continue; end
 
         subj_num = tokens{1};  % may be '010' etc.
@@ -152,25 +156,25 @@ for k = 1:numel(vhdr_files)
         ses_label = sprintf('ses-%s', ses_from_name);
 
         % keep using your configured task_label if you want, but by default align to filename
-        task_label = task_from_name; %#ok<NASGU>
+        TASK_LABEL = task_from_name; %#ok<NASGU>
 
         % Compose BIDS base filename (from parsed labels)
         bids_base = sprintf('%s_%s_task-%s%s', sub_label, ses_label, task_from_name, run_tag);
     end
 
     % --- BEH: Copy behavioral log files into /beh with BIDS-style names ---
-    if do_beh
+    if DO_BEH
         beh_dir = fullfile(bids_root, sub_label, ses_label, 'beh');
         if ~exist(beh_dir, 'dir'); mkdir(beh_dir); end
 
         % looks for CF_<subj>-*.log or .txt in the behavioral folder
-        beh_candidates = [ dir(fullfile(path_beh, sprintf('CF_%s-*.log', subj_num))) ; ...
-                           dir(fullfile(path_beh, sprintf('CF_%s-*.txt', subj_num))) ];
+        beh_candidates = [ dir(fullfile(PATH_BEH, sprintf('CF_%s-*.log', subj_num))) ; ...
+                           dir(fullfile(PATH_BEH, sprintf('CF_%s-*.txt', subj_num))) ];
 
         for b = 1:numel(beh_candidates)
 
             beh_name = beh_candidates(b).name;
-            btokens  = regexp(beh_name, re_beh, 'tokens', 'once');
+            btokens  = regexp(beh_name, RE_BEH, 'tokens', 'once');
             if isempty(btokens); continue; end
 
             % btokens{1} is subj (3 digits), btokens{2} is desc, btokens{3} is ext
@@ -179,7 +183,7 @@ for k = 1:numel(vhdr_files)
             if isempty(beh_desc); beh_desc = 'log'; end
 
             beh_ext      = btokens{3};                       % 'log' or 'txt'
-            beh_base     = sprintf('%s_%s_task-%s%s_desc-%s', sub_label, ses_label, task_label, run_tag, beh_desc);
+            beh_base     = sprintf('%s_%s_task-%s%s_desc-%s', sub_label, ses_label, TASK_LABEL, run_tag, beh_desc);
 
             src_beh = fullfile(beh_candidates(b).folder, beh_name);
             dst_beh = fullfile(beh_dir, [beh_base '_beh.' beh_ext]);
@@ -189,14 +193,14 @@ for k = 1:numel(vhdr_files)
     end
 
     % --- EEGLAB BIDS exporter (only when we actually processed EEG here) ---
-    if do_eeg
+    if DO_EEG
         EEG = pop_loadbv(eeg_dir, [bids_base '_eeg.vhdr']);            % load the BIDS-renamed header
         [ALLEEG, EEG, CURRENTSET] = pop_newset(ALLEEG, EEG, 1, 'gui', 'off');
 
         % Build export args; only pass 'run' when present
         export_args = {'subject', subj_num, ...
-                       'session', session_label, ...
-                       'task',    task_label, ...
+                       'session', SESSION_LABEL, ...
+                       'task',    TASK_LABEL, ...
                        'dataformat', 'BrainVision', ...
                        'overwrite', 'on', ...
                        'bidsevent', 'off'};  % we placed *_events.log already

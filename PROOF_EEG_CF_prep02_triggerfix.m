@@ -1,11 +1,16 @@
 function step_out = proof_eeg_cf_prep02_triggerfix(subj_id, cfg, paths, helpers)
-% PROOF_EEG_CF_PREP02_TRIGGERFIX  Trigger re-mapping + (optional) RAW order QC.
+% PROOF_EEG_CF_PREP02_TRIGGERFIX - PROOF - Classical Paradigm / Saskia Wilken / JAN 2026
+% Step 02 of the PROOF Classical-Conditioning EEG preprocessing pipeline.
 %
-% - Function; no cd/clear/close
-% - Exactly one output per subject by default
-% - Logging via helpers.logmsg_default
-% - Delete behavior via cfg.io.overwrite_mode ("delete"|"skip")
-% - Uses ONLY helpers.safe_delete_set (defined in mother script)
+% Does (short):
+%   - Load BIDS BrainVision EEG (.vhdr) for the subject (handles multiple candidates by policy).
+%   - OPTIONAL Quality Control (QC): compare event order between behavior log vs raw EEG triggers
+%     and write a mismatch CSV (best-effort; never fails the step).
+%   - Remap raw triggers into phase-specific codes using phase start markers (S 91..S 95).
+%   - Optionally "disable" the first acquisition/extinction trials by replacing their event codes.
+%   - Save *_triggersfixed.set into derivatives/01_trigger_fix/sub-XXX/
+%
+% MATLAB R2023a | EEGLAB required (pop_loadbv, eeg_checkset, pop_saveset)
 
 %% ========================================================================
 %  DEFAULTS
@@ -13,22 +18,32 @@ function step_out = proof_eeg_cf_prep02_triggerfix(subj_id, cfg, paths, helpers)
 step_out = struct('ok', false, 'skipped', false, 'out_set_file', '', 'message', '');
 
 step_cfg = struct();
+
+% --- Optional Quality Control (QC) ---
 step_cfg.run_raw_order_qc = true;
 
-step_cfg.allow_multiple_runs = false;
+% --- Multiple BIDS EEG recordings per subject handling ---
+step_cfg.allow_multiple_runs  = false;
 step_cfg.multiple_vhdr_policy = "most_recent"; % "most_recent" | "first" | "error"
 
+% --- QC output directory (if empty -> prefer paths.qc_dir, else prep02_out_dir) ---
 step_cfg.qc_out_dir = "";
 
+% --- Extinction segmentation (Ext1 / Ext2 / Ext3) ---
 step_cfg.ext_n_first  = 11;
 step_cfg.ext_n_second = 10;
 
+% --- "Disable" first trials (helps exclude known-unreliable early trials) ---
 step_cfg.disable_first_acq_trials = true;
 step_cfg.disable_first_ext_trials = true;
 
+% --- Explicit channel list for pop_loadbv (PROOF default: 66 channels) ---
+step_cfg.use_explicit_chanlist = true;
+
+% --- Overwrite policy override for this step ("" = use cfg.io.overwrite_mode) ---
 step_cfg.overwrite_mode = "";
 
-% merge cfg overrides if present
+% ---- merge cfg overrides if present -------------------------------------
 if isfield(cfg, 'steps') && isfield(cfg.steps, 'prep02_triggerfix')
     s = cfg.steps.prep02_triggerfix;
     if isfield(s, 'overwrite_mode') && strlength(string(s.overwrite_mode)) > 0
@@ -36,9 +51,26 @@ if isfield(cfg, 'steps') && isfield(cfg.steps, 'prep02_triggerfix')
     end
     if isfield(s, 'allow_multiple_runs'); step_cfg.allow_multiple_runs = s.allow_multiple_runs; end
     if isfield(s, 'run_raw_order_qc');    step_cfg.run_raw_order_qc    = s.run_raw_order_qc; end
+    if isfield(s, 'multiple_vhdr_policy'); step_cfg.multiple_vhdr_policy = string(s.multiple_vhdr_policy); end
+    if isfield(s, 'qc_out_dir');           step_cfg.qc_out_dir = string(s.qc_out_dir); end
+    if isfield(s, 'ext_n_first');          step_cfg.ext_n_first = s.ext_n_first; end
+    if isfield(s, 'ext_n_second');         step_cfg.ext_n_second = s.ext_n_second; end
+    if isfield(s, 'disable_first_acq_trials'); step_cfg.disable_first_acq_trials = s.disable_first_acq_trials; end
+    if isfield(s, 'disable_first_ext_trials'); step_cfg.disable_first_ext_trials = s.disable_first_ext_trials; end
+    if isfield(s, 'use_explicit_chanlist');    step_cfg.use_explicit_chanlist = s.use_explicit_chanlist; end
 end
 
-overwrite_mode = resolve_overwrite_mode(cfg, step_cfg);
+% ---- merge overrides from mother cfg.prep02 (highest priority) ------------
+% This allows adjusting Step02 behavior via cfg.prep02.<field>.
+% Example: cfg.prep02.run_raw_order_qc = false;
+if isfield(cfg, 'prep02') && isstruct(cfg.prep02)
+    f = fieldnames(cfg.prep02);
+    for k = 1:numel(f)
+        step_cfg.(f{k}) = cfg.prep02.(f{k});
+    end
+end
+
+overwrite_mode = helpers.resolve_overwrite_mode(cfg, step_cfg.overwrite_mode);
 
 %% ========================================================================
 %  PATHS
@@ -50,16 +82,21 @@ end
 if isfield(paths, 'prep02_out_dir')
     prep02_out_dir = paths.prep02_out_dir;
 else
-    % fallback (should normally never happen)
+    % fallback (should normally never happen if build_paths() is used)
     prep02_out_dir = fullfile(paths.out_root, '01_trigger_fix', sprintf('sub-%s', subj_id));
 end
 helpers.ensure_dir(prep02_out_dir);
 
-qc_out_dir = step_cfg.qc_out_dir;
-if strlength(string(qc_out_dir)) == 0
-    qc_out_dir = prep02_out_dir;
+% Prefer centralized QC directory (from mother script) when available
+qc_out_dir = string(step_cfg.qc_out_dir);
+if strlength(qc_out_dir) == 0
+    if isfield(paths, 'qc_dir') && strlength(string(paths.qc_dir)) > 0
+        qc_out_dir = string(paths.qc_dir);
+    else
+        qc_out_dir = string(prep02_out_dir);
+    end
 end
-helpers.ensure_dir(qc_out_dir);
+helpers.ensure_dir(char(qc_out_dir));
 
 %% ========================================================================
 %  INPUT DISCOVERY (BIDS EEG)
@@ -77,7 +114,7 @@ end
 
 % choose file if multiple and allow_multiple_runs=false
 if numel(vhdr_list) > 1 && ~step_cfg.allow_multiple_runs
-    switch step_cfg.multiple_vhdr_policy
+    switch string(step_cfg.multiple_vhdr_policy)
         case "error"
             msg = sprintf('Found %d .vhdr files for sub-%s but allow_multiple_runs=false. Refuse to proceed.', ...
                 numel(vhdr_list), subj_id);
@@ -93,20 +130,12 @@ if numel(vhdr_list) > 1 && ~step_cfg.allow_multiple_runs
             vhdr_list = vhdr_list(ix);
     end
 
-    helpers.logmsg_default('Multiple vhdr found; using "%s" policy -> %s', ...
+    helpers.logmsg_default('Multiple vhdr found; using policy="%s" -> %s', ...
         string(step_cfg.multiple_vhdr_policy), vhdr_list.name);
 end
 
-% safety: ensure struct array (some people accidentally turn this into non-struct)
-if ~isstruct(vhdr_list)
-    msg = 'vhdr_list is not a struct array (unexpected).';
-    helpers.logmsg_default('ERROR: %s', msg);
-    step_out.message = msg;
-    return;
-end
-
 %% ========================================================================
-%  OPTIONAL BEHAVIOR LOG (for RAW QC)
+%  OPTIONAL BEHAVIOR LOG (for RAW Quality Control)
 % ========================================================================
 beh = [];
 beh_file = "";
@@ -135,14 +164,15 @@ for f = 1:numel(vhdr_list)
     bids_vhdr = vhdr_list(f).name;
     [~, bids_base] = fileparts(bids_vhdr);
 
-    % --- IMPORTANT: out_set_file is built HERE (not inside helper funcs)
+    % Output file name
     out_set_file = fullfile(prep02_out_dir, sprintf('%s_triggersfixed.set', bids_base));
-    out_set_file = char(string(out_set_file));  % normalize for exist/delete/logging
+    out_set_file = char(string(out_set_file)); % normalize for exist/logging
 
-    % Overwrite policy (per output file)
-    [do_run, skip_reason] = should_run_step(out_set_file, overwrite_mode, helpers, cfg);
+    % Overwrite policy (centralized helper from mother script)
+    [do_run, skip_reason] = helpers.step_should_run_outputs(out_set_file, overwrite_mode, cfg);
+
     if ~do_run
-        helpers.logmsg_default('Step 02 skip: %s', skip_reason);
+        helpers.logmsg_default('Step 02 skip: %s', string(skip_reason));
         step_out.skipped = true;
         out_files(end+1,1) = string(out_set_file);
         continue;
@@ -154,16 +184,20 @@ for f = 1:numel(vhdr_list)
 
     helpers.logmsg_default('Step 02 triggerfix: loading %s', bids_vhdr);
 
-    EEG = pop_loadbv(eeg_dir, bids_vhdr, [], ...
-        [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 ...
-         25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 ...
-         47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66]);
+    % NOTE: PROOF default expects 66 channels. If your recordings differ, set
+    % step_cfg.use_explicit_chanlist=false (then pop_loadbv loads all channels).
+    if step_cfg.use_explicit_chanlist
+        chanlist = 1:66;
+        EEG = pop_loadbv(eeg_dir, bids_vhdr, [], chanlist);
+    else
+        EEG = pop_loadbv(eeg_dir, bids_vhdr);
+    end
 
     EEG = eeg_checkset(EEG);
 
-    % ==========================================================
-    % RAW QC BEFORE RENAMING (optional)
-    % ==========================================================
+    % =====================================================================
+    % RAW QC BEFORE RENAMING (optional; best-effort)
+    % =====================================================================
     if ~isempty(beh)
         try
             qc_cfg = struct();
@@ -171,10 +205,9 @@ for f = 1:numel(vhdr_list)
             qc_cfg.max_rows          = 20000;
             qc_cfg.keep_tokens       = ["S 20","S 21","S 22","S 23","S 24","S 15","S 5"];
             qc_cfg.write_csv_on_ok   = false;
-            qc_cfg.qc_out_dir        = qc_out_dir;
 
             helpers.raw_qc_behavior_vs_eeg_and_write_csv( ...
-                beh, EEG, subj_id, bids_base, qc_out_dir, qc_cfg);
+                beh, EEG, subj_id, bids_base, char(qc_out_dir), qc_cfg);
 
         catch me
             helpers.logmsg_default('WARNING: RAW QC failed for %s (sub-%s). Reason: %s', bids_base, subj_id, me.message);
@@ -183,19 +216,14 @@ for f = 1:numel(vhdr_list)
         helpers.logmsg_default('RAW QC skipped (no behavior log) for %s', bids_base);
     end
 
-    % ------------------------------------------------------------
-    % FIXED RAW MAPPING:
-    %   S 20 == CS-
-    %   S 24 == CS+
-    % ------------------------------------------------------------
+    % Fixed meaning in this pipeline (no subject-level counterbalancing):
     raw_csminus = 'S 20';
     raw_csplus  = 'S 24';
-
     EEG = helpers.append_eeg_comment(EEG, 'prep02_triggerfix: fixed CS mapping S20=CS- | S24=CS+');
 
-    % ==========================================================
-    % PASS 1: PHASE-GATED REMAP (SINGLE PASS)
-    % ==========================================================
+    % =====================================================================
+    % PASS 1: PHASE-GATED REMAP
+    % =====================================================================
     hab_start = false; acq_start = false; gen_start = false; ext_start = false; rof_start = false;
 
     acq_block_csmin  = 0;
@@ -211,6 +239,7 @@ for f = 1:numel(vhdr_list)
 
         EEG.event(x).type = helpers.normalize_trigger_type(EEG.event(x).type);
 
+        % Phase switches (markers)
         switch EEG.event(x).type
             case 'S 91'
                 hab_start = true;  acq_start = false; gen_start = false; ext_start = false; rof_start = false;
@@ -224,6 +253,7 @@ for f = 1:numel(vhdr_list)
                 hab_start = false; acq_start = false; gen_start = false; ext_start = false; rof_start = true;
         end
 
+        % Habituation
         if hab_start
             switch EEG.event(x).type
                 case 'S 20', EEG.event(x).type = 'S 201';
@@ -234,6 +264,7 @@ for f = 1:numel(vhdr_list)
             end
         end
 
+        % Acquisition (split early vs late blocks)
         if acq_start
             if (acq_block_csmin < 10) || (acq_block_csplus < 10)
                 switch EEG.event(x).type
@@ -252,6 +283,7 @@ for f = 1:numel(vhdr_list)
             end
         end
 
+        % Generalization
         if gen_start
             switch EEG.event(x).type
                 case 'S 20', EEG.event(x).type = 'S 203';
@@ -262,6 +294,7 @@ for f = 1:numel(vhdr_list)
             end
         end
 
+        % Extinction (Ext1 / Ext2 / Ext3)
         if ext_start
             switch EEG.event(x).type
                 case raw_csminus
@@ -286,6 +319,7 @@ for f = 1:numel(vhdr_list)
             end
         end
 
+        % Return of fear
         if rof_start
             switch EEG.event(x).type
                 case raw_csminus, EEG.event(x).type = 'S 205';
@@ -297,9 +331,9 @@ for f = 1:numel(vhdr_list)
         end
     end
 
-    % ==========================================================
-    % PASS 3: disable first extinction trial per stream
-    % ==========================================================
+    % =====================================================================
+    % PASS 2: disable first extinction trial per stream (optional)
+    % =====================================================================
     if step_cfg.disable_first_ext_trials
         first_ext_minus_done = false;
         first_ext_plus_done  = false;
@@ -321,9 +355,9 @@ for f = 1:numel(vhdr_list)
         EEG = helpers.append_eeg_comment(EEG, 'prep02_triggerfix: disabled first extinction CS-/CS+ trial (reverted first 2041->S20 and 2441->S24)');
     end
 
-    % ==========================================================
-    % PASS 4: disable first acquisition trials
-    % ==========================================================
+    % =====================================================================
+    % PASS 3: disable first acquisition trials (optional)
+    % =====================================================================
     if step_cfg.disable_first_acq_trials
         acqdelete_one = false;
         acqdelete_two = false;
@@ -347,17 +381,19 @@ for f = 1:numel(vhdr_list)
 
     EEG = eeg_checkset(EEG);
 
-% ---- SAVE output (robust) -------------------------------------------------
-fname = sprintf('%s_triggersfixed.set', bids_base);
+    % =====================================================================
+    % SAVE OUTPUT (robust wrapper from mother script)
+    % =====================================================================
+    fname = sprintf('%s_triggersfixed.set', bids_base);
 
-if cfg.io.dry_run
-    helpers.logmsg_default('DRY RUN: would save trigger-fixed set: %s', fullfile(prep02_out_dir, fname));
-else
-    EEG = helpers.safe_saveset(EEG, prep02_out_dir, fname, helpers, cfg);
-    helpers.logmsg_default('Saved trigger-fixed set: %s', fullfile(prep02_out_dir, fname));
-end
+    if cfg.io.dry_run
+        helpers.logmsg_default('DRY RUN: would save trigger-fixed set: %s', fullfile(prep02_out_dir, fname));
+    else
+        EEG = helpers.safe_saveset(EEG, prep02_out_dir, fname, helpers, cfg);
+        helpers.logmsg_default('Saved trigger-fixed set: %s', fullfile(prep02_out_dir, fname));
+    end
 
-    % quick sanity count
+    % Quick sanity count for S 245 (Return-of-fear CS+ marker)
     num245 = 0;
     for x = 1:numel(EEG.event)
         if strcmp(EEG.event(x).type, 'S 245')
@@ -383,74 +419,3 @@ if numel(out_files) > 1
 end
 
 end % function
-
-
-%% ========================================================================
-%  LOCAL UTILITIES (SAFE: NO OUTER-SCOPE VARIABLES)
-% ========================================================================
-function overwrite_mode = resolve_overwrite_mode(cfg, step_cfg)
-overwrite_mode = string(cfg.io.overwrite_mode);
-if isfield(step_cfg, 'overwrite_mode') && strlength(string(step_cfg.overwrite_mode)) > 0
-    overwrite_mode = string(step_cfg.overwrite_mode);
-end
-if overwrite_mode ~= "delete" && overwrite_mode ~= "skip"
-    overwrite_mode = "delete";
-end
-end
-
-function [do_run, reason] = should_run_step(out_set_file, overwrite_mode, helpers, cfg)
-% Decide whether to run based on file existence and overwrite policy.
-out_set_file = char(string(out_set_file)); % must be char row vector for exist()
-
-exists_out = exist(out_set_file, 'file') == 2;
-
-if ~exists_out
-    do_run = true;
-    reason = "output not present";
-    return;
-end
-
-if overwrite_mode == "skip"
-    do_run = false;
-    reason = sprintf('output exists -> skip (%s)', out_set_file);
-    return;
-end
-
-do_run = true;
-reason = sprintf('output exists -> delete + regenerate (%s)', out_set_file);
-
-if cfg.io.dry_run
-    helpers.logmsg_default('DRY RUN: would delete existing output: %s', out_set_file);
-end
-end
-
-function out = force_char_scalar(x)
-% Force any string/cell/char into a 1xN char row vector (scalar).
-    if isstring(x)
-        x = x(:);
-        if isempty(x); out = ''; else; out = char(x(1)); end
-        return;
-    end
-    if iscell(x)
-        if isempty(x); out = ''; else; out = force_char_scalar(x{1}); end
-        return;
-    end
-    if ischar(x)
-        if isempty(x); out = ''; else; out = x(1,:); end  % first row only
-        return;
-    end
-    if isempty(x)
-        out = '';
-        return;
-    end
-    out = char(string(x(1)));
-end
-
-function v = getfield_safe(S, field, default)
-    if isstruct(S) && isfield(S, field)
-        v = S.(field);
-    else
-        v = default;
-    end
-end
-

@@ -1,31 +1,17 @@
 function step_out = proof_eeg_cf_prep03_untilica(subj_id, cfg, paths, helpers)
-% PROOF_EEG_CF_PREP03_UNTILICA  Preprocess trigger-fixed set until ICA-prep.
-%
-% Contract:
-%   - Input:  exactly one trigger-fixed set from Step 02:
-%       paths.prep02_out_dir/*_triggersfixed.set
-%       If multiple exist, picks MOST RECENT and logs a warning.
-%   - Output (ALWAYS TWO FILES):
-%       (1) paths.prep03_out_dir_untilica/<run>_preica.set   (pipeline-continuous dataset)
-%       (2) paths.prep03_out_dir_forica/<run>_forica.set     (ICA-training-only dataset)
-%
-% No GUI / no per-step logs. Uses helpers.logmsg_default (echo + file).
-% Overwrite: global cfg.io.overwrite_mode, optionally overridden by cfg.steps.prep03_untilica.overwrite_mode
-%
-% Required helpers (define in mother + pass handles):
-%   helpers.ensure_dir(pth)
-%   helpers.resolve_overwrite_mode(cfg, step_overwrite_mode) -> "delete"|"skip"
-%   helpers.step_should_run_outputs(out_files_cell, overwrite_mode, cfg) -> [do_run, reason, needs_regen]
-%   helpers.safe_delete_set(set_file)  % deletes .set + .fdt if present
-%   helpers.append_eeg_comment(EEG, line) -> EEG
-%   helpers.ensure_channel_types(EEG, step_cfg) -> EEG
-%   helpers.find_first_event_latency(EEG, event_type) -> latency|[]
-%   helpers.find_flat_or_invalid_channels(EEG, eeg_idx, eps) -> [idx],[labels]
-%   helpers.detect_bad_channels_emulation_style(EEG, eeg_idx, flatline_sec, corr_thr) -> [idx],[labels]
-%   helpers.apply_filter_to_subset_only(EEG, subset_idx, lo, hi, label) -> EEG
-%   helpers.apply_pop_cleanline_to_subset(EEG, subset_idx, step_cfg) -> [EEG, did_apply]
-%   helpers.apply_jointprob_safely(EEG, local_thr, global_thr) -> [EEG, did_apply]
-%   helpers.reject_ica_prep_epochs_by_mad_variance(EEG, chan_idx, z_thr, use_logvar) -> [EEG, info]
+% PROOF_EEG_CF_PREP03_UNTILICA - PROOF - Classical Paradigm / Saskia Wilken / JAN 2026
+% Preprocess trigger-fixed set until ICA-prep.
+% DESCRIPTION (short)
+%   Loads the trigger-fixed continuous dataset from Step 02 and prepares two outputs:
+%     (1) *_preica.set : continuous pipeline dataset for all later steps
+%     (2) *_forica.set : ICA-training-only dataset (extra high-pass + epoch-based QC)
+%   Key operations:
+%     - optional crop to task window using markers (default S 91..S 97)
+%     - channel type assignment (EEG/EOG/AUX)
+%     - optional downsampling
+%     - bad-channel detection (EEG only), optional interpolation before ICA
+%     - filtering + optional line-noise removal on EEG+EOG only
+%     - ICA-prep dataset creation (regepochs + optional MAD/jointprob rejection)
 
 %% ========================================================================
 %  OUTPUT INIT
@@ -40,7 +26,7 @@ step_out = struct( ...
     'out_forica_set', '' );
 
 %% ========================================================================
-%  STEP CFG DEFAULTS (safe fallbacks here)
+%  STEP CFG DEFAULTS 
 % ========================================================================
 step_cfg = struct();
 
@@ -107,6 +93,26 @@ if isfield(cfg, 'steps') && isfield(cfg.steps, 'prep03_untilica')
         step_cfg.overwrite_mode = string(s.overwrite_mode);
     end
 end
+
+%% ========================================================================
+%  STEP CFG DEFAULTS 
+% ========================================================================
+step_cfg = struct();
+... % deine Defaults
+
+% >>> HIER HIN KOMMT 2b <<<
+% merge overrides from mother cfg.prep03
+if isfield(cfg, 'prep03') && isstruct(cfg.prep03)
+    f = fieldnames(cfg.prep03);
+    for k = 1:numel(f)
+        step_cfg.(f{k}) = cfg.prep03.(f{k});
+    end
+end
+
+% Merge user overrides from cfg.steps... (overwrite_mode)
+...
+overwrite_mode = helpers.resolve_overwrite_mode(cfg, step_cfg.overwrite_mode);
+
 
 overwrite_mode = helpers.resolve_overwrite_mode(cfg, step_cfg.overwrite_mode);
 

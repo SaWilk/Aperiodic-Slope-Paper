@@ -1,5 +1,5 @@
 function run_eeg_pipeline(varargin)
-% RUN_EEG_PIPELINE  Mother driver for PROOF EEG preprocessing (PC / server / HPC).
+% RUN_EEG_PIPELINE Saskia Wilken / Saskia Wilken / DEZ 2025 driver for PROOF EEG preprocessing (PC / server / HPC).
 %
 % Goals / conventions:
 %   - One config (cfg) here; step functions receive cfg + paths + helpers.
@@ -11,16 +11,18 @@ function run_eeg_pipeline(varargin)
 %       - cfg.io.overwrite_mode = "delete" (default): delete existing outputs for that step + regenerate
 %       - cfg.io.overwrite_mode = "skip": if output exists, skip step
 %       - Can be overridden per-step (cfg.steps.<step>.overwrite_mode)
-%   - snake_case names; constants ALL_CAPS_SNAKE_CASE
 %
 % Step function signature:
 %   step_out = proof_eeg_cf_prepXX_step(subj_id, cfg, paths, helpers)
 %
-% MATLAB R2023a+ (HPC-safe)
-% Saskia Wilken pipeline style
+% MATLAB R2023a 
+
+%% HOW TO USE
+%
+% Expects outputs form the 01_BIDS_formatting function
 
 %% ========================================================================
-%  CONSTANTS (ALL_CAPS_SNAKE_CASE)
+%  CONSTANTS 
 % ========================================================================
 DEFAULT_BIDS_FOLDER_NAME   = 'BIDS_RTGMN_Classic';
 LOG_SUBDIR_RUNLOG          = fullfile('logs', 'runlog_pipeline');
@@ -139,7 +141,6 @@ cfg.io.dry_run = false;
 % ========================================================================
 cfg.subjects = struct();
 cfg.subjects.list              = []; % empty = discover all from bids_root/sub-*
-cfg.subjects.max_subjects_debug = []; % e.g., 3 for quick tests
 
 %% ========================================================================
 %  CONFIG: PARALLELIZATION
@@ -147,11 +148,6 @@ cfg.subjects.max_subjects_debug = []; % e.g., 3 for quick tests
 cfg.parallel = struct();
 cfg.parallel.enable = true;      % will still be validated per env.mode
 cfg.parallel.force_workers = []; % set to integer to override SLURM/auto detection
-
-%% ========================================================================
-%  CONFIG: DEBUGGING 
-% ========================================================================
-% cfg.subjects.max_subjects_debug = 1;
 
 %% ========================================================================
 %  CONFIG: PIPELINE STEPS (toggles + per-step overwrite overrides)
@@ -165,6 +161,99 @@ cfg.steps.prep05_after_ica  = struct('run', true, 'overwrite_mode', "");
 cfg.steps.prep06_epoching   = struct('run', true, 'overwrite_mode', "");
 
 %% ========================================================================
+%  CONFIG: STEP 02 (triggerfix)
+% ========================================================================
+cfg.prep02 = struct();
+
+% RAW order Quality Control (QC) vs behavior log (writes CSV when mismatch)
+cfg.prep02.run_raw_order_qc = true;
+
+% If multiple BIDS .vhdr exist for same subject/task:
+%   false -> enforce policy below
+%   true  -> loop over all vhdr files found
+cfg.prep02.allow_multiple_runs = false;
+
+% Policy when multiple .vhdr found and allow_multiple_runs=false:
+%   "most_recent" | "first" | "error"
+cfg.prep02.multiple_vhdr_policy = "most_recent";
+
+% Optional QC output directory ("" -> use step output directory)
+cfg.prep02.qc_out_dir = "";
+
+% Extinction block sizes (used for trigger remapping)
+cfg.prep02.ext_n_first  = 11;
+cfg.prep02.ext_n_second = 10;
+
+% Disable (revert) first extinction trials per stream (CS-/CS+)
+cfg.prep02.disable_first_ext_trials = true;
+
+% Disable first acquisition trials (marks first CS-/CS+ as exclude tokens)
+cfg.prep02.disable_first_acq_trials = true;
+
+
+%% ========================================================================
+%  CONFIG: STEP 03 (until ICA-prep)
+% ========================================================================
+cfg.prep03 = struct();
+
+% Crop to task window (by markers)
+cfg.prep03.crop_to_task_markers = true;
+cfg.prep03.crop_start_marker    = 'S 91';
+cfg.prep03.crop_end_marker      = 'S 97';
+cfg.prep03.crop_padding_sec     = [0 0];   % [pre post] seconds
+
+% Channel typing labels (used to set EEG/EOG/AUX types)
+cfg.prep03.eog_channel_labels     = {'IO1','IO2','LO1','LO2'};
+cfg.prep03.scr_channel_labels     = {'SCR'};
+cfg.prep03.startle_channel_labels = {'Startle'};
+cfg.prep03.ekg_channel_labels     = {'EKG'};
+
+% Downsample: 0 (none) | 250 | 500
+cfg.prep03.downsample_hz = 250;
+
+% Bad channel detection: "auto" (clean_rawdata) | "auto_rejchan" (pop_rejchan) | "off"
+cfg.prep03.detect_bad_channels_mode = "auto";
+cfg.prep03.auto_badchan_z_threshold  = 3.29;
+cfg.prep03.auto_badchan_freqrange_hz = [1 125];
+
+% clean_rawdata-style parameters
+cfg.prep03.emu_flatline_sec           = 5;
+cfg.prep03.emu_channel_corr_threshold = 0.80;
+
+% Flat/invalid channel flagging
+cfg.prep03.flag_flat_channels_as_bad     = true;
+cfg.prep03.flat_channel_variance_epsilon = 0;   % 0 = exactly flat or invalid
+
+% Interpolation
+cfg.prep03.interpolate_bad_channels_before_ica = true;
+cfg.prep03.interp_method = 'spherical';
+
+% Filters (applied to EEG+EOG only)
+cfg.prep03.highpass_hz          = 0.01;
+cfg.prep03.lowpass_hz           = 30;
+cfg.prep03.ica_prep_highpass_hz = 1;
+
+% Line noise
+cfg.prep03.line_noise_method          = "pop_cleanline"; % "pop_cleanline" | "off"
+cfg.prep03.line_noise_frequencies_hz  = [50 100];
+cfg.prep03.pop_cleanline_bandwidth_hz = 2;
+cfg.prep03.pop_cleanline_p_value      = 0.01;
+cfg.prep03.pop_cleanline_verbose      = false;
+
+% ICA-prep epochs + rejection (FORICA dataset only)
+cfg.prep03.ica_prep_use_regepochs           = true;
+cfg.prep03.ica_prep_regepoch_length_sec     = 1;
+
+cfg.prep03.ica_prep_use_mad_epoch_rejection = true;
+cfg.prep03.ica_prep_mad_z_threshold         = 3;
+cfg.prep03.ica_prep_mad_use_logvar          = true;
+
+cfg.prep03.ica_prep_use_jointprob_rejection = true;
+cfg.prep03.ica_prep_jointprob_local         = 2;
+cfg.prep03.ica_prep_jointprob_global        = 2;
+
+
+%% ========================================================================
 %  CONFIG: STEP 04 (ICA)
 % ========================================================================
 cfg.prep04 = struct();
@@ -173,6 +262,8 @@ cfg.prep04.use_extended_infomax = true;
 cfg.prep04.interrupt_ica        = 'off';
 cfg.prep04.use_pca_rank_if_interpolated = true;
 cfg.prep04.amica_require_no_spaces_on_windows = true;
+cfg.paths = struct();
+cfg.paths.branch_by_ica_method = true;   % NEW
 
 %% ========================================================================
 %  CONFIG: STEP 05 (ICLabel rejection until epoching)
@@ -181,6 +272,7 @@ cfg.prep05 = struct();
 
 cfg.prep05.clear_subject_ica_comps_dir = true;
 
+% thresholds for rejection of components
 cfg.prep05.iclabel_eye_remove_thr       = 0.80;
 cfg.prep05.iclabel_muscle_remove_thr    = 0.80;
 cfg.prep05.iclabel_heart_remove_thr     = 0.80;
@@ -190,9 +282,10 @@ cfg.prep05.iclabel_channoise_remove_thr = 0.80;
 cfg.prep05.iclabel_other_remove_thr     = 0.95;
 cfg.prep05.iclabel_brain_min_keep_thr   = 0.05;
 
-cfg.prep05.save_ic_topos_png    = true;
-cfg.prep05.iclabel_edge_margin = 0.10;
+cfg.prep05.save_ic_topos_png    = true; %for manual checking
+cfg.prep05.iclabel_edge_margin = 0.10; % which components to plot as edge cases
 
+% cpomponent png specs
 cfg.prep05.ic_topo_dpi        = 300;
 cfg.prep05.ic_topo_fig_cm     = [0 0 18 18];
 cfg.prep05.ic_topo_electrodes = 'off';
@@ -202,8 +295,8 @@ cfg.prep05.ic_topo_electrodes = 'off';
 % ========================================================================
 cfg.prep06 = struct();
 
-cfg.prep06.save_final_only         = true;   % default: single final output
-cfg.prep06.save_intermediate_steps = false;  % only used if save_final_only=false
+cfg.prep06.save_final_only         = true;   % default: single final output. each step produces one file. 
+cfg.prep06.save_intermediate_steps = false;  % only used if save_final_only=false. save one file after each preprocessing operation. can quickly fill up your disk space
 cfg.prep06.savemode                = 'twofiles';  % 'twofiles' | 'onefile'
 
 cfg.prep06.reference_mode = "avg";           % "avg" | "mastoid"
@@ -211,8 +304,10 @@ cfg.prep06.reference_mode = "avg";           % "avg" | "mastoid"
 cfg.prep06.do_artifact_rejection = true;
 cfg.prep06.faster_z_thresh       = 3;
 cfg.prep06.faster_use_robust_z   = false;
-cfg.prep06.faster_warn_if_reject_prop_gt = 0.25;
+cfg.prep06.faster_warn_if_reject_prop_gt = 0.25; %warns if a subject has so many epochs rejected that they will be excluded
+cfg.prep06.max_reject_prop = 0.0;   % exclude subject if % epochs rejected
 
+% epoch rejection specs
 cfg.prep06.faster_use_amplitude         = true;
 cfg.prep06.faster_use_variance          = true;
 cfg.prep06.faster_use_channel_deviation = true;
@@ -220,6 +315,7 @@ cfg.prep06.faster_use_channel_deviation = true;
 cfg.prep06.epoch_start_s   = -0.4;
 cfg.prep06.epoch_end_s     =  2.6;
 cfg.prep06.base_start_ms   = -200;
+
 
 cfg.prep06.events_phase = { ...
     'S 201','S 241', ...
@@ -298,7 +394,17 @@ end
 % ========================================================================
 
 % decide: AMICA forces serial subject loop (parfor workers cannot call system/unix)
-force_serial_due_to_amica = cfg.steps.prep04_ica.run && (string(cfg.prep04.ica_method) == "amica");
+force_serial_due_to_amica = ...
+    use_parallel && ...
+    (cfg.env.mode == "hpc") && ...
+    cfg.steps.prep04_ica.run && ...
+    (string(cfg.prep04.ica_method) == "amica");
+
+if force_serial_due_to_amica
+    helpers.logmsg(master_log, 'HPC+parfor+AMICA -> forcing serial subject loop (unix/system blocked on workers).');
+    use_parallel = false;
+end
+% NOTE: HOPE THERE WILL BE A FIX FOR THIS SOON!
 
 if force_serial_due_to_amica && use_parallel
     helpers.logmsg(master_log, 'AMICA selected -> disabling subject-level parfor (system/unix blocked on workers).');
@@ -308,6 +414,7 @@ end
 n_sub = numel(sub_ids);
 status = repmat(struct('subj','', 'ok',false, 'message','', 'logfile',''), n_sub, 1);
 
+% executing pipeline
 if use_parallel
     parfor i = 1:n_sub
         subj_id = sub_ids{i};
@@ -468,9 +575,21 @@ paths.bids_ses_dir = fullfile(paths.bids_sub_dir, 'ses-01');
 paths.step02_root = fullfile(paths.out_root, '01_trigger_fix');
 paths.step03_untilica_root = fullfile(paths.out_root, '02_until_ica');
 paths.step03_forica_root   = fullfile(paths.out_root, '03_for_ica');
-paths.step04_root          = fullfile(paths.out_root, '04_after_ica');
-paths.step05_root          = fullfile(paths.out_root, '05_until_epoching');
-paths.step06_root          = fullfile(paths.out_root, '06_epoched');
+% branch depending on ICA type for 4 - 6
+ica_tag = "runica";
+if isfield(cfg,'prep04') && isfield(cfg.prep04,'ica_method')
+    ica_tag = string(cfg.prep04.ica_method);
+end
+
+suffix = "";
+if isfield(cfg.paths,'branch_by_ica_method') && cfg.paths.branch_by_ica_method
+    suffix = "_" + ica_tag;  % -> "_runica" or "_amica"
+end
+
+paths.step04_root = fullfile(paths.out_root, "04_after_ica"      + suffix);
+paths.step05_root = fullfile(paths.out_root, "05_until_epoching" + suffix);
+paths.step06_root = fullfile(paths.out_root, "06_epoched"        + suffix);
+
 
 ensure_dir(paths.step02_root);
 ensure_dir(paths.step03_untilica_root);
@@ -537,11 +656,6 @@ end
 sub_ids = sub_ids(:);
 rx = cfg.constants.valid_sub_id_regex;
 sub_ids = sub_ids(~cellfun(@isempty, regexp(sub_ids, rx, 'once')));
-
-if ~isempty(cfg.subjects.max_subjects_debug)
-    sub_ids = sub_ids(1:min(numel(sub_ids), cfg.subjects.max_subjects_debug));
-    helpers.logmsg(master_log, 'DEBUG: limiting to %d subject(s).', numel(sub_ids));
-end
 
 if isempty(sub_ids)
     error('No subjects found in %s', cfg.paths.bids_root);
@@ -853,14 +967,19 @@ end
 % ========================================================================
 function latency = find_first_event_latency(EEG, event_type)
 latency = [];
-if ~isfield(EEG,'event') || isempty(EEG.event)
-    return;
+if ~isfield(EEG,'event') || isempty(EEG.event); return; end
+
+target = normalize_trigger_type(event_type);
+
+for k = 1:numel(EEG.event)
+    t = normalize_trigger_type(EEG.event(k).type);
+    if strcmp(t, target)
+        latency = EEG.event(k).latency;
+        return;
+    end
 end
-types = {EEG.event.type};
-idx = find(strcmp(types, event_type), 1, 'first');
-if isempty(idx); return; end
-latency = EEG.event(idx).latency;
 end
+
 
 function EEG = ensure_channel_types(EEG, step_cfg)
 
