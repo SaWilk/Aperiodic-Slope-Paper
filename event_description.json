@@ -1,0 +1,36 @@
+{
+  "onset": {
+    "Description": "Event onset time in seconds from the beginning of the EEG recording."
+  },
+  "duration": {
+    "Description": "Event duration in seconds (0 if unknown)."
+  },
+  "value": {
+    "Description": "BrainVision trigger codes as recorded in EEG.event(x).type.",
+    "Levels": {
+      "S 11": "Eyes OPEN: start phase 1 marker (task-specific segmentation marker; open condition is assumed to be active from recording start until the first eyes-closed marker).",
+      "S 12": "Eyes OPEN: start phase 2 marker (if multiple open blocks occur).",
+      "S 13": "Eyes OPEN: start phase 3 marker (if multiple open blocks occur).",
+      "S 14": "Eyes OPEN: start phase 4 marker (if multiple open blocks occur).",
+
+      "S 21": "Eyes CLOSED: start phase 1 marker (closed condition begins at the first marker starting with '2', typically S 21).",
+      "S 22": "Eyes CLOSED: start phase 2 marker (if multiple closed blocks occur).",
+      "S 23": "Eyes CLOSED: start phase 3 marker (if multiple closed blocks occur).",
+      "S 24": "Eyes CLOSED: start phase 4 marker (if multiple closed blocks occur).",
+
+      "S 99": "End of baseline block (marks the end of the last eyes-closed block; any data after S 99 is treated as Eyes OPEN again).",
+
+      "boundary": "EEGLAB boundary event indicating a recording discontinuity (pause, cut, or concatenation)."
+    }
+  },
+  "SegmentationPolicy": {
+    "Description": "Segmentation into Eyes OPEN vs Eyes CLOSED uses trigger families S 1x (open markers) and S 2x (closed markers) plus S 99 as the baseline end marker.",
+    "Rules": [
+      "Eyes OPEN starts at the beginning of the recording (t=0), not at S 11.",
+      "The first Eyes CLOSED block starts at the first trigger whose code starts with '2' (typically S 21).",
+      "Eyes CLOSED ends at S 99 (end of baseline).",
+      "Any data after S 99 is treated as Eyes OPEN again.",
+      "Within each OPEN/CLOSED chunk, fixed-length 10 s epochs are created using eeg_regepochs (as many non-overlapping epochs as fit)."
+    ]
+  }
+}

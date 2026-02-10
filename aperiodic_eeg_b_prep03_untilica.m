@@ -1,17 +1,24 @@
 function step_out = proof_eeg_cf_prep03_untilica(subj_id, cfg, paths, helpers)
 % PROOF_EEG_CF_PREP03_UNTILICA - PROOF - Classical Paradigm / Saskia Wilken / JAN 2026
 % Preprocess trigger-fixed set until ICA-prep.
+%
 % DESCRIPTION (short)
 %   Loads the trigger-fixed continuous dataset from Step 02 and prepares two outputs:
 %     (1) *_preica.set : continuous pipeline dataset for all later steps
 %     (2) *_forica.set : ICA-training-only dataset (extra high-pass + epoch-based QC)
-%   Key operations:
-%     - optional crop to task window using markers (default S 91..S 97)
-%     - channel type assignment (EEG/EOG/AUX)
-%     - optional downsampling
-%     - bad-channel detection (EEG only), optional interpolation before ICA
-%     - filtering + optional line-noise removal on EEG+EOG only
-%     - ICA-prep dataset creation (regepochs + optional MAD/jointprob rejection)
+%
+% INPUT (preferred):
+%   paths.prep02_out_dir: .../01_trigger_fix/sub-xxx/*_triggersfixed.set
+%
+% FALLBACK (if Step02 skipped / missing):
+%   raw BIDS BrainVision: .../sub-xxx/ses-01/eeg/*.vhdr (policy: pick most recent)
+%
+% OUTPUT:
+%   paths.prep03_out_dir_untilica: .../02_until_ica/sub-xxx/<run_base>_preica.set
+%   paths.prep03_out_dir_forica  : .../03_for_ica/sub-xxx/<run_base>_forica.set
+%
+% NOTE:
+%   This step uses centralized helpers passed from the mother script.
 
 %% ========================================================================
 %  OUTPUT INIT
@@ -26,7 +33,7 @@ step_out = struct( ...
     'out_forica_set', '' );
 
 %% ========================================================================
-%  STEP CFG DEFAULTS 
+%  STEP CFG DEFAULTS (define ONCE)
 % ========================================================================
 step_cfg = struct();
 
@@ -50,6 +57,7 @@ step_cfg.detect_bad_channels_mode = "auto";
 step_cfg.auto_badchan_z_threshold  = 3.29;
 step_cfg.auto_badchan_freqrange_hz = [1 125];
 
+% emulation-style
 step_cfg.emu_flatline_sec           = 5;
 step_cfg.emu_channel_corr_threshold = 0.80;
 
@@ -86,21 +94,9 @@ step_cfg.ica_prep_mad_use_logvar              = true;
 % Overwrite override ("" => use global)
 step_cfg.overwrite_mode = "";
 
-% Merge user overrides from mother cfg if present
-if isfield(cfg, 'steps') && isfield(cfg.steps, 'prep03_untilica')
-    s = cfg.steps.prep03_untilica;
-    if isfield(s,'overwrite_mode') && strlength(string(s.overwrite_mode)) > 0
-        step_cfg.overwrite_mode = string(s.overwrite_mode);
-    end
-end
-
 %% ========================================================================
-%  STEP CFG DEFAULTS 
+%  MERGE OVERRIDES FROM MOTHER CFG (your "2b")
 % ========================================================================
-step_cfg = struct();
-... % deine Defaults
-
-% >>> HIER HIN KOMMT 2b <<<
 % merge overrides from mother cfg.prep03
 if isfield(cfg, 'prep03') && isstruct(cfg.prep03)
     f = fieldnames(cfg.prep03);
@@ -109,56 +105,84 @@ if isfield(cfg, 'prep03') && isstruct(cfg.prep03)
     end
 end
 
-% Merge user overrides from cfg.steps... (overwrite_mode)
-...
-overwrite_mode = helpers.resolve_overwrite_mode(cfg, step_cfg.overwrite_mode);
-
+% per-step overwrite override
+if isfield(cfg, 'steps') && isfield(cfg.steps, 'prep03_untilica')
+    s = cfg.steps.prep03_untilica;
+    if isfield(s,'overwrite_mode') && strlength(string(s.overwrite_mode)) > 0
+        step_cfg.overwrite_mode = string(s.overwrite_mode);
+    end
+end
 
 overwrite_mode = helpers.resolve_overwrite_mode(cfg, step_cfg.overwrite_mode);
 
 %% ========================================================================
 %  PATHS (mother should set these; fallback minimally)
 % ========================================================================
-if ~isfield(paths,'prep02_out_dir')
-    paths.prep02_out_dir = fullfile(paths.subj_out_dir, '01_trigger_fix');
+if ~isfield(paths,'prep02_out_dir') || strlength(string(paths.prep02_out_dir)) == 0
+    % best guess fallback (should normally not happen)
+    paths.prep02_out_dir = fullfile(paths.out_root, '01_trigger_fix', sprintf('sub-%s', subj_id));
 end
-if ~isfield(paths,'prep03_out_dir_untilica')
-    paths.prep03_out_dir_untilica = fullfile(paths.subj_out_dir, '02_until_ica');
+if ~isfield(paths,'prep03_out_dir_untilica') || strlength(string(paths.prep03_out_dir_untilica)) == 0
+    paths.prep03_out_dir_untilica = fullfile(paths.out_root, '02_until_ica', sprintf('sub-%s', subj_id));
 end
-if ~isfield(paths,'prep03_out_dir_forica')
-    paths.prep03_out_dir_forica = fullfile(paths.subj_out_dir, '03_for_ica');
+if ~isfield(paths,'prep03_out_dir_forica') || strlength(string(paths.prep03_out_dir_forica)) == 0
+    paths.prep03_out_dir_forica = fullfile(paths.out_root, '03_for_ica', sprintf('sub-%s', subj_id));
 end
 
 helpers.ensure_dir(paths.prep03_out_dir_untilica);
 helpers.ensure_dir(paths.prep03_out_dir_forica);
 
-sub_in_dir = paths.prep02_out_dir;
-
 %% ========================================================================
-%  FIND INPUT: *_triggersfixed.set (pick most recent if multiple)
+%  FIND INPUT
+%    A) Prefer Step02 output: *_triggersfixed.set in paths.prep02_out_dir
+%    B) Fallback: raw BIDS BrainVision *.vhdr
 % ========================================================================
-trigger_fixed_sets = dir(fullfile(sub_in_dir, '*_triggersfixed.set'));
+input_source = "triggersfixed_set";
+in_dir  = paths.prep02_out_dir;
+in_name = "";
 
-if isempty(trigger_fixed_sets)
-    msg = sprintf('prep03_untilica: no *_triggersfixed.set found in %s (sub-%s)', sub_in_dir, subj_id);
-    helpers.logmsg_default('%s', msg);
-    step_out.message = msg;
-    step_out.ok = false;
-    return;
+trigger_fixed_sets = dir(fullfile(in_dir, '*_triggersfixed.set'));
+
+if ~isempty(trigger_fixed_sets)
+
+    if numel(trigger_fixed_sets) > 1
+        [~, ix] = max([trigger_fixed_sets.datenum]);
+        helpers.logmsg_default('prep03_untilica: WARNING multiple *_triggersfixed.set found (%d). Using most recent: %s', ...
+            numel(trigger_fixed_sets), trigger_fixed_sets(ix).name);
+        trigger_fixed_sets = trigger_fixed_sets(ix);
+    end
+
+    in_name = trigger_fixed_sets.name;
+    run_base_name = erase(in_name, '_triggersfixed.set');
+
+else
+    % ---- Option B fallback: load raw BIDS .vhdr ----------------------------
+    [vhdr_dir, vhdr_name] = helpers.find_bids_vhdr(paths, subj_id, helpers);
+
+    if isempty(vhdr_name)
+        msg = sprintf(['prep03_untilica: no input found. Neither *_triggersfixed.set in %s ' ...
+                       'nor any *.vhdr in BIDS eeg folder for sub-%s.'], in_dir, subj_id);
+        helpers.logmsg_default('%s', msg);
+        step_out.message = msg;
+        step_out.ok = false;
+        return;
+    end
+
+    input_source = "bids_vhdr";
+    in_dir  = vhdr_dir;
+    in_name = vhdr_name;
+
+    run_base_name = regexprep(in_name, '\.vhdr$', '', 'ignorecase');
 end
-
-if numel(trigger_fixed_sets) > 1
-    [~, ix] = max([trigger_fixed_sets.datenum]);
-    helpers.logmsg_default('prep03_untilica: WARNING multiple trigger-fixed sets found (%d). Using most recent: %s', ...
-        numel(trigger_fixed_sets), trigger_fixed_sets(ix).name);
-    trigger_fixed_sets = trigger_fixed_sets(ix);
-end
-
-trigger_fixed_set_name = trigger_fixed_sets.name;
-run_base_name = erase(trigger_fixed_set_name, '_triggersfixed.set');
 
 step_out.run_base_name = run_base_name;
-step_out.in_triggersfixed_set = fullfile(sub_in_dir, trigger_fixed_set_name);
+
+% bookkeeping variable for Step02 case
+if input_source == "triggersfixed_set"
+    step_out.in_triggersfixed_set = fullfile(in_dir, in_name);
+else
+    step_out.in_triggersfixed_set = "";
+end
 
 % Output filenames (ALWAYS TWO)
 out_preica = fullfile(paths.prep03_out_dir_untilica, sprintf('%s_preica.set', run_base_name));
@@ -168,7 +192,6 @@ step_out.out_forica_set = out_forica;
 
 %% ========================================================================
 %  OVERWRITE POLICY (considers BOTH outputs)
-%  IMPORTANT: DO NOT DELETE YET (we may skip later due to missing markers)
 % ========================================================================
 out_files = {out_preica, out_forica};
 [do_run, reason, needs_regen] = helpers.step_should_run_outputs(out_files, overwrite_mode, cfg);
@@ -181,16 +204,25 @@ if ~do_run
     return;
 end
 
-helpers.logmsg_default('prep03_untilica: START sub-%s | %s', subj_id, run_base_name);
+helpers.logmsg_default('prep03_untilica: START sub-%s | %s | input_source=%s | input=%s', ...
+    subj_id, run_base_name, input_source, fullfile(in_dir, in_name));
 
 %% ========================================================================
 %  LOAD INPUT
 % ========================================================================
-EEG = helpers.safe_loadset(sub_in_dir, trigger_fixed_set_name, helpers);
+if input_source == "triggersfixed_set"
+    EEG = helpers.safe_loadset(in_dir, in_name, helpers);
+elseif input_source == "bids_vhdr"
+    EEG = helpers.safe_loadbv(in_dir, in_name, helpers);
+else
+    error('prep03_untilica: internal error: unknown input_source=%s', char(input_source));
+end
+
 EEG = eeg_checkset(EEG);
 
 EEG = helpers.append_eeg_comment(EEG, 'prep03_untilica: start');
-EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: input=%s', trigger_fixed_set_name));
+EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: input_source=%s', input_source));
+EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: input=%s', fullfile(in_dir, in_name)));
 
 %% ========================================================================
 %  CHANNEL TYPES
@@ -205,7 +237,7 @@ EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: channel counts E
     numel(eeg_idx), numel(eog_idx), numel(aux_idx)));
 
 %% ========================================================================
-%  CROP TO TASK WINDOW (DEFAULT ON)
+%  CROP TO TASK WINDOW (OPTIONAL)
 % ========================================================================
 if step_cfg.crop_to_task_markers
     start_latency = helpers.find_first_event_latency(EEG, step_cfg.crop_start_marker);
@@ -410,10 +442,10 @@ end
 
 if step_cfg.ica_prep_use_mad_epoch_rejection
     ica_eeg_idx = find(strcmpi({ica_prep_eeg.chanlocs.type}, 'EEG'));
-    if ~isempty(ica_eeg_idx) && ica_prep_eeg.trials >= 3
+    if ~isempty(ica_eeg_idx) && isfield(ica_prep_eeg,'trials') && ica_prep_eeg.trials >= 3
         [ica_prep_eeg, mad_info] = helpers.reject_ica_prep_epochs_by_mad_variance( ...
             ica_prep_eeg, ica_eeg_idx, step_cfg.ica_prep_mad_z_threshold, step_cfg.ica_prep_mad_use_logvar);
-        if mad_info.did_apply
+        if isstruct(mad_info) && isfield(mad_info,'did_apply') && mad_info.did_apply
             ica_prep_eeg = helpers.append_eeg_comment(ica_prep_eeg, sprintf( ...
                 'prep03_untilica: ICA-prep MAD reject z=%.2f rejected %d/%d', ...
                 mad_info.z_thresh, mad_info.n_rejected, mad_info.n_before));

@@ -24,7 +24,7 @@ function run_eeg_pipeline(varargin)
 %% ========================================================================
 %  CONSTANTS 
 % ========================================================================
-DEFAULT_BIDS_FOLDER_NAME   = 'BIDS_RTGMN_Classic';
+DEFAULT_BIDS_FOLDER_NAME   = 'BIDS_RTGMN_Baseline';
 LOG_SUBDIR_RUNLOG          = fullfile('logs', 'runlog_pipeline');
 
 %% ========================================================================
@@ -77,7 +77,7 @@ cfg.paths = struct();
 % --- Default profile depends on env.mode; can be overridden by env var PROOF_PROFILE
 cfg.paths.profile = default_profile_for_mode(cfg.env.mode);
 
-prof_env = string(getenv_or_empty('PROOF_PROFILE'));
+prof_env = string(getenv_or_empty('BASELINE_PROFILE'));
 if strlength(prof_env) > 0
     cfg.paths.profile = prof_env;
 end
@@ -87,23 +87,23 @@ switch cfg.paths.profile
 
     case "pc_now"
         cfg.paths.bids_root = fullfile('K:\Wilken_Arbeitsordner\Raw_data', DEFAULT_BIDS_FOLDER_NAME);
-        cfg.paths.out_root  = fullfile('K:\Wilken_Arbeitsordner\Preprocessed_data\MATRICS\eeg');
+        cfg.paths.out_root  = fullfile('K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg');
 
     case "pc_shared"
         cfg.paths.bids_root = fullfile('Z:\pb\KLPSY1\KLPSY1-RTG\MATRICS\raw');
-        cfg.paths.out_root  = fullfile('Z:\pb\KLPSY1\KLPSY1-RTG\MATRICS\derivatives\preprocessed_eeg');
+        cfg.paths.out_root  = fullfile('Z:\pb\KLPSY1\KLPSY1-RTG\MATRICS\derivatives/preprocessed_eeg_baseline');
 
     case "hpc_hummel"
         cfg.paths.bids_root = fullfile('/beegfs/u/bbf7366/raw', DEFAULT_BIDS_FOLDER_NAME);
-        cfg.paths.out_root  = fullfile('/beegfs/u/bbf7366/derivatives/preprocessed_eeg');
+        cfg.paths.out_root  = fullfile('/beegfs/u/bbf7366/derivatives/preprocessed_eeg/preprocessed_eeg_baseline');
 
     otherwise
         error('Unknown cfg.paths.profile="%s".', string(cfg.paths.profile));
 end
 
 % --- Absolute path overrides (highest priority)
-bids_env = string(getenv_or_empty('PROOF_BIDS_ROOT'));
-out_env  = string(getenv_or_empty('PROOF_OUT_ROOT'));
+bids_env = string(getenv_or_empty('BASELINE_BIDS_ROOT'));
+out_env  = string(getenv_or_empty('BASELINE_OUT_ROOT'));
 if strlength(bids_env) > 0
     cfg.paths.bids_root = bids_env;
 end
@@ -154,7 +154,7 @@ cfg.parallel.force_workers = []; % set to integer to override SLURM/auto detecti
 % ========================================================================
 cfg.steps = struct();
 
-cfg.steps.prep02_triggerfix = struct('run', true, 'overwrite_mode', "");
+cfg.steps.prep02_triggerfix = struct('run', false, 'overwrite_mode', "");
 cfg.steps.prep03_untilica   = struct('run', true, 'overwrite_mode', "");
 cfg.steps.prep04_ica        = struct('run', true, 'overwrite_mode', "");
 cfg.steps.prep05_after_ica  = struct('run', true, 'overwrite_mode', "");
@@ -197,7 +197,7 @@ cfg.prep02.disable_first_acq_trials = true;
 cfg.prep03 = struct();
 
 % Crop to task window (by markers)
-cfg.prep03.crop_to_task_markers = true;
+cfg.prep03.crop_to_task_markers = false;
 cfg.prep03.crop_start_marker    = 'S 91';
 cfg.prep03.crop_end_marker      = 'S 97';
 cfg.prep03.crop_padding_sec     = [0 0];   % [pre post] seconds
@@ -229,8 +229,8 @@ cfg.prep03.interpolate_bad_channels_before_ica = true;
 cfg.prep03.interp_method = 'spherical';
 
 % Filters (applied to EEG+EOG only)
-cfg.prep03.highpass_hz          = 0.01;
-cfg.prep03.lowpass_hz           = 30;
+cfg.prep03.highpass_hz          = 0.1;
+cfg.prep03.lowpass_hz           = 100;
 cfg.prep03.ica_prep_highpass_hz = 1;
 
 % Line noise
@@ -262,8 +262,7 @@ cfg.prep04.use_extended_infomax = true;
 cfg.prep04.interrupt_ica        = 'off';
 cfg.prep04.use_pca_rank_if_interpolated = true;
 cfg.prep04.amica_require_no_spaces_on_windows = true;
-cfg.paths = struct();
-cfg.paths.branch_by_ica_method = true;   % NEW
+cfg.paths.branch_by_ica_method = true;   
 
 %% ========================================================================
 %  CONFIG: STEP 05 (ICLabel rejection until epoching)
@@ -312,9 +311,16 @@ cfg.prep06.faster_use_amplitude         = true;
 cfg.prep06.faster_use_variance          = true;
 cfg.prep06.faster_use_channel_deviation = true;
 
+cfg.prep06.epoching_mode = "regular";
+cfg.prep06.regepoch_length_sec = 10;
+cfg.prep06.regepoch_step_sec   = 10;
+
 cfg.prep06.epoch_start_s   = -0.4;
 cfg.prep06.epoch_end_s     =  2.6;
-cfg.prep06.base_start_ms   = -200;
+% Baseline correction
+cfg.prep06.do_baseline_correction = false;   % 
+cfg.prep06.base_start_ms          = -200;   
+cfg.prep06.base_end_ms            = 0;      % default 0ms
 
 
 cfg.prep06.events_phase = { ...
@@ -356,9 +362,9 @@ helpers.logmsg(master_log, 'Step05: eye=%.2f mus=%.2f heart=%.2f line=%.2f ch=%.
     cfg.prep05.iclabel_linenoise_remove_thr, cfg.prep05.iclabel_channoise_remove_thr, ...
     cfg.prep05.iclabel_other_remove_thr, cfg.prep05.iclabel_brain_min_keep_thr, cfg.prep05.iclabel_edge_margin);
 
-helpers.logmsg(master_log, 'Step06: ref=%s | epoch=[%.1f %.1f]s | baseline=[%d 0]ms | faster_z=%.2f robust=%d',...
-    string(cfg.prep06.reference_mode), cfg.prep06.epoch_start_s, cfg.prep06.epoch_end_s, cfg.prep06.base_start_ms, ...
-    cfg.prep06.faster_z_thresh, cfg.prep06.faster_use_robust_z);
+helpers.logmsg(master_log, 'Step06: ref=%s | epoch_mode=%s | regular=%gs | baseline_apply=%d | baseline=[%d %d]ms | faster_z=%.2f robust=%d', ...
+    string(cfg.prep06.reference_mode), string(cfg.prep06.epoching_mode), cfg.prep06.regepoch_length_sec, cfg.prep06.do_baseline_correction, ...
+    cfg.prep06.base_start_ms, cfg.prep06.base_end_ms, cfg.prep06.faster_z_thresh, cfg.prep06.faster_use_robust_z);
 
 %% ========================================================================
 %  TOOLBOX PATHS (client process)
@@ -378,6 +384,12 @@ helpers.logmsg(master_log, 'Found %d subject(s).', numel(sub_ids));
 use_parallel = resolve_parallel_enable(cfg);
 
 if use_parallel
+
+    if isempty(getenv('MATLAB_PREFDIR'))
+    setenv('MATLAB_PREFDIR', fullfile(tempdir, 'matlab_prefs'));
+    if ~exist(getenv('MATLAB_PREFDIR'),'dir'); mkdir(getenv('MATLAB_PREFDIR')); end
+    end
+
     n_workers = resolve_worker_count(cfg, helpers, master_log);
     helpers.logmsg(master_log, 'Parallel enabled (%d workers).', n_workers);
 
@@ -731,6 +743,9 @@ helpers.safe_delete_set           = @safe_delete_set;
 helpers.safe_saveset = @safe_saveset;
 helpers.safe_loadset = @safe_loadset;
 
+% BIDS EEG fallback (for Step 03 if Step 02 is skipped)
+helpers.find_bids_vhdr = @find_bids_vhdr;
+helpers.safe_loadbv    = @safe_loadbv;
 
 % EEG/comment + trigger normalization
 helpers.append_eeg_comment = @append_eeg_comment;
