@@ -116,7 +116,7 @@ end
 cfg.toolboxes = struct();
 
 cfg.toolboxes.path_eeglab_pc  = "K:\Wilken_Arbeitsordner\MATLAB\eeglab_current\eeglab2025.1.0";
-cfg.toolboxes.path_eeglab_hpc = "/beegfs/u/bbf7366/toolboxes/eeglab_current/eeglab2025.1.0";
+cfg.toolboxes.path_eeglab_hpc = "/beegfs/u/bbf7366/toolboxes/eeglab2025.1.0";
 
 cfg.toolboxes.path_faster_pc  = "K:\Wilken_Arbeitsordner\MATLAB\FASTER";
 cfg.toolboxes.path_faster_hpc = "/beegfs/u/bbf7366/toolboxes/FASTER";

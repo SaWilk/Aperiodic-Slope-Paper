@@ -1,45 +1,37 @@
-function step_out = aperiodic_eeg_b_prep06_epoching(subj_id, cfg, paths, helpers)
-% APERIODIC_EEG_B_PREP06_EPOCHING - Aperiodic Baseline pipeline / Saskia Wilken / FEB 2026
+function step_out = proof_eeg_baseline_prep06_epoching(subj_id, cfg, paths, helpers)
+% PROOF_EEG_BASELINE_PREP06_EPOCHING - Baseline (Eyes Open/Closed) epoching
 %
-% Step 06:
-%   - Apply chosen reference (avg OR mastoid; exactly one).
-%   - Epoch (regular fixed-length by default; trigger-based optional).
-%   - Final automatic epoch-level artifact rejection (FASTER-style: epoch_properties + |z|>thr).
-%   - Optional baseline correction.
-%   - Subject-level exclusion if rejected-epoch proportion exceeds cfg.prep06.max_reject_prop.
-%   - Save ONE final epoched dataset by default: *_epoched_final.set
-%
-% IMPORTANT: No local helper functions are defined in this file.
-%            Everything uses inline logic + helpers passed in.
+% Does:
+%   - Apply chosen reference (avg OR mastoid)
+%   - Segment continuous recording into Eyes OPEN vs Eyes CLOSED chunks using triggers:
+%       * OPEN starts at t=0 until first trigger starting with '2' (typically S 21)
+%       * CLOSED runs from that first '2x' marker until S 99 (end baseline)
+%       * After S 99: OPEN again until end
+%       * Additionally honors later S 1x / S 2x switches if present
+%   - Within each chunk, create as many 10s non-overlapping epochs as fit (eeg_regepochs)
+%   - Final epoch rejection (FASTER epoch_properties z-threshold)
+%   - Save TWO final datasets per run: open + closed
 %
 % Inputs:
-%   paths.prep05_out_dir : contains *_until_epoching.set
+%   paths.prep05_out_dir: *_until_epoching.set
 % Outputs:
-%   paths.prep06_out_dir : writes *_epoched_final.set (unless subject excluded)
+%   paths.prep06_out_dir: *_cond-open_epoched_final.set, *_cond-closed_epoched_final.set
 
 step_out = struct('ok', false, 'message', '', 'outputs', {{}});
 
 subj_label = sprintf('sub-%s', subj_id);
 
 try
+    if ~isfield(cfg,'prep06') || isempty(cfg.prep06)
+        error('cfg.prep06 missing.');
+    end
     c = cfg.prep06;
 
-    % ---- defaults ---------------------------------------------------------
-    if ~isfield(c,'epoching_mode') || isempty(c.epoching_mode)
-        c.epoching_mode = "regular";   % "regular" | "trigger"
+    % ---- defaults ----
+    if ~isfield(c,'reference_mode') || strlength(string(c.reference_mode))==0
+        c.reference_mode = "avg";
     end
-    if ~isfield(c,'regepoch_length_sec') || isempty(c.regepoch_length_sec)
-        c.regepoch_length_sec = 10;
-    end
-    if ~isfield(c,'regepoch_step_sec') || isempty(c.regepoch_step_sec)
-        c.regepoch_step_sec = c.regepoch_length_sec;
-    end
-    if ~isfield(c,'savemode') || isempty(c.savemode)
-        c.savemode = 'twofiles'; %#ok<NASGU>  % retained for compatibility; driver helper uses pop_saveset defaults
-    end
-    if ~isfield(c,'max_reject_prop') || isempty(c.max_reject_prop)
-        c.max_reject_prop = 0.25;  % IMPORTANT: default is NOT 0.0
-    end
+
     if ~isfield(c,'do_artifact_rejection') || isempty(c.do_artifact_rejection)
         c.do_artifact_rejection = true;
     end
@@ -48,6 +40,17 @@ try
     end
     if ~isfield(c,'faster_use_robust_z') || isempty(c.faster_use_robust_z)
         c.faster_use_robust_z = false;
+    end
+    if ~isfield(c,'max_reject_prop') || isempty(c.max_reject_prop)
+        c.max_reject_prop = 0.25;
+    end
+
+    % regepoch settings
+    if ~isfield(c,'regepoch_length_sec') || isempty(c.regepoch_length_sec)
+        c.regepoch_length_sec = 10;
+    end
+    if ~isfield(c,'regepoch_step_sec') || isempty(c.regepoch_step_sec)
+        c.regepoch_step_sec = c.regepoch_length_sec;
     end
 
     overwrite_mode = helpers.resolve_overwrite_mode(cfg, cfg.steps.prep06_epoching.overwrite_mode);
@@ -71,31 +74,34 @@ try
         in_name  = in_sets(fi).name;
         run_base = erase(in_name, '_until_epoching.set');
 
-        out_fname = char(string(run_base) + "_epoched_final.set");
-        out_path  = fullfile(out_dir, out_fname);
+        % output paths (two conditions)
+        out_name_open   = run_base + "_cond-open_epoched_final.set";
+        out_name_closed = run_base + "_cond-closed_epoched_final.set";
 
-        % ---- overwrite policy check ---------------------------------------
-        [do_run, reason] = helpers.step_should_run_outputs(out_path, overwrite_mode, cfg);
+        out_path_open   = fullfile(out_dir, char(out_name_open));
+        out_path_closed = fullfile(out_dir, char(out_name_closed));
+
+        % overwrite policy check: treat as a pair
+        [do_run, reason] = helpers.step_should_run_outputs({out_path_open, out_path_closed}, overwrite_mode, cfg);
         helpers.logmsg_default('prep06_epoching: %s | %s | %s', subj_label, run_base, string(reason));
 
         if ~do_run
-            outputs_written{end+1} = out_path; %#ok<AGROW>
+            outputs_written{end+1} = out_path_open;   %#ok<AGROW>
+            outputs_written{end+1} = out_path_closed; %#ok<AGROW>
             continue;
         end
 
-        if overwrite_mode == "delete" && exist(out_path,'file') == 2 && ~cfg.io.dry_run
-            helpers.safe_delete_set(out_path);
+        if overwrite_mode == "delete" && ~cfg.io.dry_run
+            if exist(out_path_open,'file')==2;   helpers.safe_delete_set(out_path_open);   end
+            if exist(out_path_closed,'file')==2; helpers.safe_delete_set(out_path_closed); end
         end
 
-        % ---- load ----------------------------------------------------------
+        % ---- load input ----
         EEG = helpers.safe_loadset(in_dir, in_name, helpers);
-
-        EEG = helpers.append_eeg_comment(EEG, '--- STEP06: epoching + final artifact rejection ---');
+        EEG = helpers.append_eeg_comment(EEG, '--- STEP06: baseline eyes-open/eyes-closed segmentation + regepochs ---');
         EEG = helpers.append_eeg_comment(EEG, sprintf('input=%s', in_name));
-        EEG = helpers.append_eeg_comment(EEG, ...
-            'Trigger convention (fixed): S 20=CS-, S 24=CS+. ACQ: 202x=CS-, 242x=CS+. No participant-specific mapping used.');
 
-        % ---- ensure event.type is char (robustness) ------------------------
+        % ---- normalize event.type to char ----
         if isfield(EEG,'event') && ~isempty(EEG.event)
             try
                 tmp = cellfun(@char, {EEG.event.type}, 'UniformOutput', false);
@@ -104,244 +110,343 @@ try
             end
         end
 
-        % ---- channel type indices (inline; no helper functions) ------------
+        % ---- channel indices by type (inline, no helpers) ----
         idxEEG = [];
         idxEOG = [];
         idxAUX = [];
-
         if isfield(EEG,'chanlocs') && ~isempty(EEG.chanlocs) && isfield(EEG.chanlocs,'type')
-            try
-                types = lower(string({EEG.chanlocs.type}));
-                idxEEG = find(types == "eeg");
-                idxEOG = find(types == "eog");
-                idxAUX = find(~(types == "eeg" | types == "eog"));
-            catch
-                idxEEG = 1:EEG.nbchan;
-            end
+            types = lower(string({EEG.chanlocs.type}));
+            idxEEG = find(types == "eeg");
+            idxEOG = find(types == "eog");
+            idxAUX = find(~(types == "eeg" | types == "eog"));
         else
-            idxEEG = 1:EEG.nbchan; % fallback
+            idxEEG = 1:EEG.nbchan;
         end
-
         EEG = helpers.append_eeg_comment(EEG, sprintf('channel counts: EEG=%d | EOG=%d | AUX=%d', ...
             numel(idxEEG), numel(idxEOG), numel(idxAUX)));
 
-        % ===================================================================
-        % STEP 1: APPLY CHOSEN REFERENCE (ONLY ONE)
-        % ===================================================================
+        % =========================
+        % 1) Apply reference (ONLY ONE)
+        % =========================
         EEGref = EEG;
 
-        if string(c.reference_mode) == "avg"
-
+        if c.reference_mode == "avg"
             if isempty(idxEEG)
                 EEGref = helpers.append_eeg_comment(EEGref, 'WARNING: no EEG channels found -> average reref skipped.');
             else
                 exclude_idx = setdiff(1:EEGref.nbchan, idxEEG); % exclude EOG + AUX
                 EEGref = pop_reref(EEGref, [], 'exclude', exclude_idx);
                 EEGref = eeg_checkset(EEGref);
-                EEGref = helpers.append_eeg_comment(EEGref, sprintf( ...
-                    'reference_mode=avg: average reference applied (EEG-only). excluded=%d', numel(exclude_idx)));
+                EEGref = helpers.append_eeg_comment(EEGref, sprintf('reference_mode=avg: average reference applied (EEG-only). excluded=%d', numel(exclude_idx)));
             end
 
-        elseif string(c.reference_mode) == "mastoid"
-
-            chan_m1 = [];
-            chan_m2 = [];
-            if isfield(EEGref,'chanlocs') && ~isempty(EEGref.chanlocs)
-                chan_m1 = find(strcmpi({EEGref.chanlocs.labels}, 'T9'),  1, 'first');
-                chan_m2 = find(strcmpi({EEGref.chanlocs.labels}, 'T10'), 1, 'first');
-            end
+        elseif c.reference_mode == "mastoid"
+            chan_m1 = find(strcmpi({EEGref.chanlocs.labels}, 'T9'), 1, 'first');
+            chan_m2 = find(strcmpi({EEGref.chanlocs.labels}, 'T10'),1, 'first');
 
             if isempty(chan_m1) || isempty(chan_m2)
-                EEGref = helpers.append_eeg_comment(EEGref, ...
-                    'reference_mode=mastoid: WARNING T9/T10 not found -> mastoid reref skipped; keeping original ref.');
+                EEGref = helpers.append_eeg_comment(EEGref, 'reference_mode=mastoid: WARNING T9/T10 not found -> mastoid reref skipped; keeping original ref.');
             else
                 exclude_idx = setdiff(1:EEGref.nbchan, idxEEG);
                 EEGref = pop_reref(EEGref, [chan_m1 chan_m2], 'exclude', exclude_idx);
                 EEGref = eeg_checkset(EEGref);
-                EEGref = helpers.append_eeg_comment(EEGref, sprintf( ...
-                    'reference_mode=mastoid: mastoid reference applied (T9/T10). excluded=%d', numel(exclude_idx)));
+                EEGref = helpers.append_eeg_comment(EEGref, sprintf('reference_mode=mastoid: mastoid reference applied (T9/T10). excluded=%d', numel(exclude_idx)));
             end
 
         else
             error('cfg.prep06.reference_mode must be "avg" or "mastoid". Current: %s', char(string(c.reference_mode)));
         end
 
-        % ===================================================================
-        % STEP 2: EPOCH
-        % ===================================================================
-        if string(c.epoching_mode) == "regular"
+        % =========================
+        % 2) Build OPEN/CLOSED continuous segments
+        % =========================
+        if ~isfield(EEGref,'event') || isempty(EEGref.event)
+            error('No EEGref.event present -> cannot segment open/closed.');
+        end
+        if ~isfield(EEGref,'srate') || isempty(EEGref.srate)
+            error('EEGref.srate missing.');
+        end
 
-            L = double(c.regepoch_length_sec);
-            S = double(c.regepoch_step_sec);
-            if S <= 0; S = L; end
+        % collect events of interest with latencies in seconds
+        ev_t = [];
+        ev_code = strings(0,1);
 
-            EEGep = eeg_regepochs(EEGref, ...
+        for k = 1:numel(EEGref.event)
+            t0 = EEGref.event(k).type;
+            tok = helpers.normalize_trigger_type(t0);
+
+            if strcmpi(tok,'boundary')
+                continue;
+            end
+
+            if startsWith(tok, "S 1") || startsWith(tok, "S 2") || strcmp(tok, "S 99")
+                ev_code(end+1,1) = string(tok); %#ok<AGROW>
+                ev_t(end+1,1) = double(EEGref.event(k).latency) / double(EEGref.srate); %#ok<AGROW>
+            end
+        end
+
+        % sort by time
+        if ~isempty(ev_t)
+            [ev_t, ix] = sort(ev_t);
+            ev_code = ev_code(ix);
+        end
+
+        T_end = double(EEGref.pnts) / double(EEGref.srate);
+
+        % segmentation state machine:
+        % start OPEN at t=0, switch to CLOSED at first "S 2x", switch back OPEN at "S 1x",
+        % force switch OPEN at S 99 (end baseline)
+        seg_cond = strings(0,1);
+        seg_t1   = [];
+        seg_t2   = [];
+
+        cur_cond = "open";
+        cur_t1 = 0;
+
+        eps_s = 1.0 / double(EEGref.srate); % 1 sample
+
+        for iEv = 1:numel(ev_code)
+            code = ev_code(iEv);
+            tEv  = ev_t(iEv);
+
+            if tEv <= cur_t1 + eps_s
+                continue;
+            end
+
+            is_open_marker   = startsWith(code, "S 1");   % S 11..S 14
+            is_closed_marker = startsWith(code, "S 2");   % S 21..S 24
+            is_end_baseline  = (code == "S 99");
+
+            % determine if this event triggers a state change
+            new_cond = cur_cond;
+
+            if is_end_baseline
+                new_cond = "open";  % after S99 open again
+            elseif is_open_marker
+                new_cond = "open";
+            elseif is_closed_marker
+                new_cond = "closed";
+            end
+
+            if new_cond ~= cur_cond
+                % close current segment at this event time
+                seg_cond(end+1,1) = cur_cond; %#ok<AGROW>
+                seg_t1(end+1,1)   = cur_t1; %#ok<AGROW>
+                seg_t2(end+1,1)   = tEv;    %#ok<AGROW>
+
+                % start new segment at this event time
+                cur_cond = new_cond;
+                cur_t1 = tEv;
+            end
+        end
+
+        % close final segment to end of recording
+        if cur_t1 < T_end - eps_s
+            seg_cond(end+1,1) = cur_cond; %#ok<AGROW>
+            seg_t1(end+1,1)   = cur_t1; %#ok<AGROW>
+            seg_t2(end+1,1)   = T_end;  %#ok<AGROW>
+        end
+
+        if isempty(seg_t1)
+            error('Could not derive any open/closed segments.');
+        end
+
+        helpers.logmsg_default('prep06_epoching: %s | %s | derived %d segments (open/closed).', ...
+            subj_label, run_base, numel(seg_t1));
+
+        % =========================
+        % 3) For each segment: select time window, regepoch into 10s chunks
+        % =========================
+        EEG_open_parts   = {};
+        EEG_closed_parts = {};
+
+        L = double(c.regepoch_length_sec);
+        S = double(c.regepoch_step_sec);
+        if S <= 0; S = L; end
+
+        for sgi = 1:numel(seg_t1)
+
+            t1 = seg_t1(sgi);
+            t2 = seg_t2(sgi);
+
+            % require at least one full epoch
+            if (t2 - t1) < L
+                continue;
+            end
+
+            % select continuous chunk
+            EEGseg = pop_select(EEGref, 'time', [t1, t2 - eps_s]);
+            EEGseg = eeg_checkset(EEGseg);
+
+            % regepoch within this chunk
+            EEGep = eeg_regepochs(EEGseg, ...
                 'recurrence', S, ...
                 'limits', [0 L], ...
                 'eventtype', 'regepoch');
             EEGep = eeg_checkset(EEGep);
 
-            % set times in ms (0..L*1000)
-            try
-                EEGep.times = round(linspace(0, L*1000, size(EEGep.data,2)));
-            catch
-            end
+            % tag condition
+            EEGep.etc.baseline_condition = char(seg_cond(sgi));
+            EEGep = helpers.append_eeg_comment(EEGep, sprintf('baseline_condition=%s | chunk=[%.3f %.3f]s | regepoch L=%.1fs S=%.1fs', ...
+                seg_cond(sgi), t1, t2, L, S));
 
-        else
-            % trigger-based epoching
-            if ~isfield(c,'events_phase') || isempty(c.events_phase)
-                error('epoching_mode="trigger" requires cfg.prep06.events_phase.');
-            end
-            if ~isfield(c,'epoch_start_s') || ~isfield(c,'epoch_end_s')
-                error('epoching_mode="trigger" requires cfg.prep06.epoch_start_s and cfg.prep06.epoch_end_s.');
-            end
-
-            EEGep = pop_epoch(EEGref, c.events_phase, [c.epoch_start_s c.epoch_end_s], ...
-                'newname', [char(run_base) '_epoched'], 'epochinfo', 'yes');
-            EEGep = eeg_checkset(EEGep);
-
-            try
-                EEGep.times = round(linspace(c.epoch_start_s*1000, c.epoch_end_s*1000, size(EEGep.data,2)));
-            catch
+            if seg_cond(sgi) == "open"
+                EEG_open_parts{end+1} = EEGep; %#ok<AGROW>
+            else
+                EEG_closed_parts{end+1} = EEGep; %#ok<AGROW>
             end
         end
 
-        % ===================================================================
-        % STEP 3: ARTIFACT REJECTION (FASTER-style: epoch_properties + z>thr)
-        % ===================================================================
-        EEGrej = EEGep;
+        % merge parts per condition (if any)
+        EEG_open = [];
+        if ~isempty(EEG_open_parts)
+            EEG_open = EEG_open_parts{1};
+            for ii = 2:numel(EEG_open_parts)
+                EEG_open = pop_mergeset(EEG_open, EEG_open_parts{ii}, 0);
+                EEG_open = eeg_checkset(EEG_open);
+            end
+        end
 
-        rej_info = struct();
-        rej_info.n_total    = EEGep.trials;
-        rej_info.n_rejected = 0;
-        rej_info.n_kept     = EEGep.trials;
-        rej_info.robust_z   = logical(c.faster_use_robust_z);
+        EEG_closed = [];
+        if ~isempty(EEG_closed_parts)
+            EEG_closed = EEG_closed_parts{1};
+            for ii = 2:numel(EEG_closed_parts)
+                EEG_closed = pop_mergeset(EEG_closed, EEG_closed_parts{ii}, 0);
+                EEG_closed = eeg_checkset(EEG_closed);
+            end
+        end
 
+        % =========================
+        % 4) Artifact rejection per condition (FASTER epoch_properties)
+        % =========================
         if c.do_artifact_rejection
-
-            if isempty(idxEEG) || EEGrej.trials < 1
-                EEGrej = helpers.append_eeg_comment(EEGrej, 'FASTER artifact rejection skipped (no EEG channels or no epochs).');
-                helpers.logmsg_default('prep06_epoching: %s | %s | WARN: FASTER skipped (no EEG or no epochs).', subj_label, run_base);
-
-            elseif exist('epoch_properties','file') ~= 2
-                EEGrej = helpers.append_eeg_comment(EEGrej, 'FASTER artifact rejection skipped (epoch_properties not found).');
-                helpers.logmsg_default('prep06_epoching: %s | %s | WARN: FASTER skipped (epoch_properties missing).', subj_label, run_base);
-
+            if exist('epoch_properties','file') ~= 2
+                helpers.logmsg_default('prep06_epoching: %s | %s | WARNING: epoch_properties not on path -> skipping FASTER.', subj_label, run_base);
             else
-                props = epoch_properties(EEGrej, idxEEG);
-
-                if ~isempty(props) && isnumeric(props)
-                    % Ensure rows correspond to epochs
-                    if size(props,1) ~= EEGrej.trials && size(props,2) == EEGrej.trials
-                        props = props.';
-                    end
-
-                    if size(props,1) == EEGrej.trials
-
-                        if rej_info.robust_z
-                            med = median(props, 1, 'omitnan');
-                            madv = median(abs(props - med), 1, 'omitnan');
-                            denom = 1.4826 .* madv;
-                            denom(denom == 0 | isnan(denom)) = Inf;
-                            zmat = (props - med) ./ denom;
-                        else
-                            mu = mean(props, 1, 'omitnan');
-                            sd = std(props, 0, 1, 'omitnan');
-                            sd(sd == 0 | isnan(sd)) = Inf;
-                            zmat = (props - mu) ./ sd;
+                % --- OPEN ---
+                if ~isempty(EEG_open) && EEG_open.trials > 0 && ~isempty(idxEEG)
+                    props = epoch_properties(EEG_open, idxEEG);
+                    if ~isempty(props) && isnumeric(props)
+                        if size(props,1) ~= EEG_open.trials && size(props,2) == EEG_open.trials
+                            props = props.';
                         end
+                        if size(props,1) == EEG_open.trials
+                            if c.faster_use_robust_z
+                                med = median(props, 1, 'omitnan');
+                                madv = median(abs(props - med), 1, 'omitnan');
+                                denom = 1.4826 .* madv;
+                                denom(denom == 0 | isnan(denom)) = Inf;
+                                zmat = (props - med) ./ denom;
+                            else
+                                mu = mean(props, 1, 'omitnan');
+                                sd = std(props, 0, 1, 'omitnan');
+                                sd(sd == 0 | isnan(sd)) = Inf;
+                                zmat = (props - mu) ./ sd;
+                            end
+                            bad = any(abs(zmat) > c.faster_z_thresh, 2);
+                            bad_epochs = find(bad);
+                            n_total = EEG_open.trials;
+                            n_rej = numel(bad_epochs);
 
-                        bad_mask = any(abs(zmat) > double(c.faster_z_thresh), 2);
-                        bad_epochs = find(bad_mask);
+                            if ~isempty(bad_epochs)
+                                EEG_open = pop_rejepoch(EEG_open, bad_epochs, 0);
+                                EEG_open = eeg_checkset(EEG_open);
+                            end
 
-                        if ~isempty(bad_epochs)
-                            EEGrej = pop_rejepoch(EEGrej, bad_epochs, 0);
-                            EEGrej = eeg_checkset(EEGrej);
+                            helpers.logmsg_default('prep06_epoching: %s | %s | OPEN FASTER rejected=%d/%d kept=%d', ...
+                                subj_label, run_base, n_rej, n_total, EEG_open.trials);
 
-                            rej_info.n_rejected = numel(bad_epochs);
-                            rej_info.n_kept     = EEGrej.trials;
+                            prop_rej = n_rej / max(1,n_total);
+                            if prop_rej > c.max_reject_prop
+                                helpers.logmsg_default('prep06_epoching: %s | %s | OPEN EXCLUDED (rejected %.1f%% > %.1f%%) -> no OPEN output.', ...
+                                    subj_label, run_base, 100*prop_rej, 100*c.max_reject_prop);
+                                EEG_open = [];
+                            end
                         end
                     end
                 end
 
-                EEGrej = helpers.append_eeg_comment(EEGrej, sprintf( ...
-                    'FASTER epoch rejection: z>%g using epoch_properties()+max|z|; rejected=%d/%d; kept=%d; robust=%d', ...
-                    c.faster_z_thresh, rej_info.n_rejected, rej_info.n_total, rej_info.n_kept, rej_info.robust_z));
+                % --- CLOSED ---
+                if ~isempty(EEG_closed) && EEG_closed.trials > 0 && ~isempty(idxEEG)
+                    props = epoch_properties(EEG_closed, idxEEG);
+                    if ~isempty(props) && isnumeric(props)
+                        if size(props,1) ~= EEG_closed.trials && size(props,2) == EEG_closed.trials
+                            props = props.';
+                        end
+                        if size(props,1) == EEG_closed.trials
+                            if c.faster_use_robust_z
+                                med = median(props, 1, 'omitnan');
+                                madv = median(abs(props - med), 1, 'omitnan');
+                                denom = 1.4826 .* madv;
+                                denom(denom == 0 | isnan(denom)) = Inf;
+                                zmat = (props - med) ./ denom;
+                            else
+                                mu = mean(props, 1, 'omitnan');
+                                sd = std(props, 0, 1, 'omitnan');
+                                sd(sd == 0 | isnan(sd)) = Inf;
+                                zmat = (props - mu) ./ sd;
+                            end
+                            bad = any(abs(zmat) > c.faster_z_thresh, 2);
+                            bad_epochs = find(bad);
+                            n_total = EEG_closed.trials;
+                            n_rej = numel(bad_epochs);
 
-                helpers.logmsg_default('prep06_epoching: %s | %s | FASTER rejected=%d/%d kept=%d', ...
-                    subj_label, run_base, rej_info.n_rejected, rej_info.n_total, rej_info.n_kept);
+                            if ~isempty(bad_epochs)
+                                EEG_closed = pop_rejepoch(EEG_closed, bad_epochs, 0);
+                                EEG_closed = eeg_checkset(EEG_closed);
+                            end
+
+                            helpers.logmsg_default('prep06_epoching: %s | %s | CLOSED FASTER rejected=%d/%d kept=%d', ...
+                                subj_label, run_base, n_rej, n_total, EEG_closed.trials);
+
+                            prop_rej = n_rej / max(1,n_total);
+                            if prop_rej > c.max_reject_prop
+                                helpers.logmsg_default('prep06_epoching: %s | %s | CLOSED EXCLUDED (rejected %.1f%% > %.1f%%) -> no CLOSED output.', ...
+                                    subj_label, run_base, 100*prop_rej, 100*c.max_reject_prop);
+                                EEG_closed = [];
+                            end
+                        end
+                    end
+                end
             end
-
-        else
-            EEGrej = helpers.append_eeg_comment(EEGrej, 'artifact rejection disabled by cfg.prep06.do_artifact_rejection=false');
         end
 
-        % ===================================================================
-        % SUBJECT-LEVEL EXCLUSION BASED ON EPOCH LOSS
-        % ===================================================================
-        if c.do_artifact_rejection && ~isempty(c.max_reject_prop)
+        % =========================
+        % 5) Save outputs (two files)
+        % =========================
+        wrote_any = false;
 
-            prop_rejected = 0;
-            if rej_info.n_total > 0
-                prop_rejected = rej_info.n_rejected / rej_info.n_total;
+        if ~isempty(EEG_open) && EEG_open.trials > 0
+            EEG_open.setname = char(run_base + "_cond-open_epoched_final");
+            EEG_open = helpers.append_eeg_comment(EEG_open, 'FINAL OUTPUT: eyes OPEN regepochs');
+            if ~cfg.io.dry_run
+                EEG_open = helpers.safe_saveset(EEG_open, out_dir, char(out_name_open), helpers, cfg);
             end
+            helpers.logmsg_default('prep06_epoching: saved OPEN: %s', out_path_open);
+            outputs_written{end+1} = out_path_open; %#ok<AGROW>
+            wrote_any = true;
+        end
 
-            if prop_rejected > double(c.max_reject_prop)
-                msg = sprintf(['prep06_epoching: SUBJECT EXCLUDED | rejected %.1f%% of epochs ' ...
-                               '(threshold %.1f%%). No final dataset written.'], ...
-                               100*prop_rejected, 100*double(c.max_reject_prop));
-
-                EEGrej = helpers.append_eeg_comment(EEGrej, msg);
-                helpers.logmsg_default('prep06_epoching: %s | %s | %s', subj_label, run_base, msg);
-
-                step_out.ok = false;
-                step_out.message = msg;
-                return;
+        if ~isempty(EEG_closed) && EEG_closed.trials > 0
+            EEG_closed.setname = char(run_base + "_cond-closed_epoched_final");
+            EEG_closed = helpers.append_eeg_comment(EEG_closed, 'FINAL OUTPUT: eyes CLOSED regepochs');
+            if ~cfg.io.dry_run
+                EEG_closed = helpers.safe_saveset(EEG_closed, out_dir, char(out_name_closed), helpers, cfg);
             end
+            helpers.logmsg_default('prep06_epoching: saved CLOSED: %s', out_path_closed);
+            outputs_written{end+1} = out_path_closed; %#ok<AGROW>
+            wrote_any = true;
         end
 
-        % ===================================================================
-        % STEP 4: BASELINE CORRECTION (OPTIONAL)
-        % ===================================================================
-        EEGfinal = EEGrej;
-
-        if ~isfield(c,'do_baseline_correction') || isempty(c.do_baseline_correction)
-            % sensible default: do baseline only for trigger-based epochs
-            c.do_baseline_correction = (string(c.epoching_mode) ~= "regular");
-        end
-        if ~isfield(c,'base_start_ms') || isempty(c.base_start_ms)
-            c.base_start_ms = -200;
-        end
-        if ~isfield(c,'base_end_ms') || isempty(c.base_end_ms)
-            c.base_end_ms = 0;
+        if ~wrote_any
+            helpers.logmsg_default('prep06_epoching: %s | %s | WARNING: no OPEN/CLOSED output written (no full 10s epochs or excluded).', subj_label, run_base);
         end
 
-        if c.do_baseline_correction
-            EEGfinal = pop_rmbase(EEGfinal, [double(c.base_start_ms) double(c.base_end_ms)]);
-            EEGfinal = eeg_checkset(EEGfinal);
-            EEGfinal = helpers.append_eeg_comment(EEGfinal, sprintf('baseline correction applied: [%d %d] ms', c.base_start_ms, c.base_end_ms));
-        else
-            EEGfinal = helpers.append_eeg_comment(EEGfinal, 'baseline correction skipped (cfg.prep06.do_baseline_correction=false)');
-        end
-
-        % ===================================================================
-        % STEP 5: SAVE FINAL OUTPUT (THIS IS THE CRITICAL PART)
-        % ===================================================================
-        % Use the driver-provided helper (no local helper function).
-        helpers.safe_saveset(EEGfinal, out_dir, out_fname, helpers, cfg);
-
-        if cfg.io.dry_run
-            helpers.logmsg_default('prep06_epoching: %s | %s | DRY RUN: would save final: %s', subj_label, run_base, out_path);
-        else
-            helpers.logmsg_default('prep06_epoching: %s | %s | saved final: %s', subj_label, run_base, out_path);
-        end
-
-        outputs_written{end+1} = out_path; %#ok<AGROW>
-    end
+    end % in_sets loop
 
     step_out.ok = true;
     step_out.outputs = outputs_written;
-    step_out.message = sprintf('prep06_epoching: OK (%d output file(s)).', numel(outputs_written));
+    step_out.message = sprintf('prep06_epoching: OK (%d output path(s) recorded).', numel(outputs_written));
 
 catch me
     step_out.ok = false;

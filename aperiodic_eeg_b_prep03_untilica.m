@@ -1,4 +1,4 @@
-function step_out = proof_eeg_cf_prep03_untilica(subj_id, cfg, paths, helpers)
+function step_out = proof_eeg_baseline_prep03_untilica(subj_id, cfg, paths, helpers)
 % PROOF_EEG_CF_PREP03_UNTILICA - PROOF - Classical Paradigm / Saskia Wilken / JAN 2026
 % Preprocess trigger-fixed set until ICA-prep.
 %
@@ -235,6 +235,67 @@ aux_idx = find(~ismember(lower({EEG.chanlocs.type}), {'eeg','eog'}));
 
 EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: channel counts EEG=%d | EOG=%d | AUX=%d', ...
     numel(eeg_idx), numel(eog_idx), numel(aux_idx)));
+
+%% ========================================================================
+%  REMOVE DEAD / INVALID CHANNELS (GLOBAL: EEG + EOG + AUX)
+%  Rationale: constant or non-finite channels create NaNs in correlations and
+%  can destabilize later ICLabel/subcomp or QC metrics.
+% ========================================================================
+
+dead_idx_all = [];
+dead_labels_all = {};
+
+if step_cfg.flag_flat_channels_as_bad && string(step_cfg.detect_bad_channels_mode) ~= "off"
+    all_idx = 1:EEG.nbchan;
+
+    % Reuse existing helper on ALL channels (not just EEG)
+    [dead_idx_all, dead_labels_all] = helpers.find_flat_or_invalid_channels( ...
+        EEG, all_idx, step_cfg.flat_channel_variance_epsilon);
+
+    if ~isempty(dead_idx_all)
+
+        % Log what gets removed (include types)
+        dead_types = strings(size(dead_idx_all));
+        for ii = 1:numel(dead_idx_all)
+            try
+                dead_types(ii) = string(EEG.chanlocs(dead_idx_all(ii)).type);
+            catch
+                dead_types(ii) = "";
+            end
+        end
+
+        EEG = helpers.append_eeg_comment(EEG, sprintf( ...
+            'prep03_untilica: removing dead/invalid channels (global): %s', ...
+            strjoin(dead_labels_all, ', ')));
+
+        helpers.logmsg_default('prep03_untilica: %s | removing dead/invalid channels (global): %s', ...
+            sprintf('sub-%s', subj_id), strjoin(string(dead_labels_all), ', '));
+
+        % Store bookkeeping
+        if ~isfield(EEG,'etc') || isempty(EEG.etc); EEG.etc = struct(); end
+        EEG.etc.dead_channels_removed = struct();
+        EEG.etc.dead_channels_removed.indices = dead_idx_all;
+        EEG.etc.dead_channels_removed.labels  = dead_labels_all;
+        EEG.etc.dead_channels_removed.types   = cellstr(dead_types);
+
+        % Actually remove them
+        EEG = pop_select(EEG, 'nochannel', dead_idx_all);
+        EEG = eeg_checkset(EEG);
+    else
+        if ~isfield(EEG,'etc') || isempty(EEG.etc); EEG.etc = struct(); end
+        EEG.etc.dead_channels_removed = struct('indices',[], 'labels',{{}}, 'types',{{}});
+    end
+end
+
+% Recompute indices after potential removal
+eeg_idx = find(strcmpi({EEG.chanlocs.type}, 'EEG'));
+eog_idx = find(strcmpi({EEG.chanlocs.type}, 'EOG'));
+aux_idx = find(~ismember(lower({EEG.chanlocs.type}), {'eeg','eog'}));
+
+EEG = helpers.append_eeg_comment(EEG, sprintf( ...
+    'prep03_untilica: channel counts AFTER dead removal EEG=%d | EOG=%d | AUX=%d', ...
+    numel(eeg_idx), numel(eog_idx), numel(aux_idx)));
+
 
 %% ========================================================================
 %  CROP TO TASK WINDOW (OPTIONAL)

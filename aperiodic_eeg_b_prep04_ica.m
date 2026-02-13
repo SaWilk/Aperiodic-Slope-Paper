@@ -1,4 +1,4 @@
-function step_out = proof_eeg_cf_prep04_ica(subj_id, cfg, paths, helpers)
+function step_out = proof_eeg_baseline_prep04_ica(subj_id, cfg, paths, helpers)
 % PROOF_EEG_CF_PREP04_ICA - PROOF - Classical Paradigm / Saskia Wilken / JAN 2026
 % Run ICA on *_forica.set and transfer weights to *_preica.set.
 %

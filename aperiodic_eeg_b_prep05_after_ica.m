@@ -1,4 +1,4 @@
-function step_out = proof_eeg_cf_prep05_after_ica(subj_id, cfg, paths, helpers)
+function step_out = proof_eeg_baseline_prep05_after_ica(subj_id, cfg, paths, helpers)
 % PROOF_EEG_CF_PREP05_AFTER_ICA - PROOF - Classical Paradigm / Saskia Wilken / JAN 2026
 %
 % Step 05 of the PROOF Classical-Conditioning EEG preprocessing pipeline.
@@ -178,6 +178,14 @@ try
         % --- Remove ICs (no popups) ---
         if ~isempty(ic2rem)
             if exist('pop_subcomp','file') == 2
+                % remove ic activations and recompute to avoid potential
+                % cached ic activations to be used
+                if isfield(EEG,'icaact'); EEG.icaact = []; end
+                EEG = eeg_checkset(EEG, 'ica');
+                % check if number of ica chans matches the number of ica
+                % weights
+                helpers.logmsg_default('ICA dims: nbchan=%d, icachansind=%d, icaweights=%s, icawinv=%s', ...
+                EEG.nbchan, numel(EEG.icachansind), mat2str(size(EEG.icaweights)), mat2str(size(EEG.icawinv)));
                 EEG = pop_subcomp(EEG, ic2rem, 0); % 0 = no confirm
             else
                 EEG.reject.gcompreject = false(1, nIC);

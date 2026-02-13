@@ -1,0 +1,18 @@
+[2026-02-13 16:23:59] === PIPELINE START 13-Feb-2026 16:23:59 ===
+[2026-02-13 16:23:59] root_dir  : Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\Aperiodic-Slope-Paper
+[2026-02-13 16:23:59] env.mode  : pc
+[2026-02-13 16:23:59] env.is_slurm: 0 | SLURM_JOB_ID= | SLURM_CLUSTER_NAME=
+[2026-02-13 16:23:59] paths.profile: pc_now
+[2026-02-13 16:23:59] bids_root : K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline
+[2026-02-13 16:23:59] out_root  : K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg
+[2026-02-13 16:23:59] overwrite : delete
+[2026-02-13 16:23:59] dry_run   : 0
+[2026-02-13 16:23:59] Step05: eye=0.80 mus=0.80 heart=0.80 line=0.80 ch=0.80 other=0.95 brain_min=0.05 edge=0.10
+[2026-02-13 16:23:59] Step06: ref=avg | epoch_mode=regular | regular=10s | baseline_apply=0 | baseline=[-200 0]ms | faster_z=3.00 robust=0
+[2026-02-13 16:24:00] Toolboxes initialized (master).
+[2026-02-13 16:24:00] Found 1 subject(s).
+[2026-02-13 16:24:00] Resolved worker count from feature(numcores)=10
+[2026-02-13 16:24:00] Parallel enabled (10 workers).
+[2026-02-13 16:25:35] Parallel pool type: parallel.ProcessPool | thread_based=0
+[2026-02-13 16:27:46] === PIPELINE END 13-Feb-2026 16:27:46 ===
+[2026-02-13 16:27:46] Completed: 1 ok | 0 failed
