@@ -1,0 +1,22 @@
+[2026-02-18 16:45:13] --- START sub-001 ---
+[2026-02-18 16:45:34] EEGLAB initialized.
+[2026-02-18 16:45:34] Step 03: untilICA
+[2026-02-18 16:45:34] prep03_untilica: BIDS fallback: using vhdr=K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline\sub-001\ses-01\eeg\sub-001_ses-01_task-baseline_eeg.vhdr
+[2026-02-18 16:45:35] prep03_untilica: START sub-001 | sub-001_ses-01_task-baseline_eeg | input_source=bids_vhdr | input=K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline\sub-001\ses-01\eeg\sub-001_ses-01_task-baseline_eeg.vhdr
+[2026-02-18 16:45:45] Loaded BrainVision: K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline\sub-001\ses-01\eeg\sub-001_ses-01_task-baseline_eeg.vhdr
+[2026-02-18 16:45:48] prep03_untilica: sub-001 | removing dead/invalid channels (global): IO2
+[2026-02-18 16:47:39] prep03_untilica: saved preica (dry_run=0): K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\02_until_ica\sub-001\sub-001_ses-01_task-baseline_eeg_preica.set
+[2026-02-18 16:47:46] ERROR: Unrecognized field name "apply_shared_epoch_rejection".
+[2026-02-18 16:47:46] Unrecognized field name "apply_shared_epoch_rejection".
+
+Error in aperiodic_eeg_b_prep03_untilica (line 578)
+        [ica_prep_eeg, rej_info] = helpers.apply_shared_epoch_rejection( ...
+
+Error in run_eeg_pipeline_baseline>run_one_subject (line 646)
+        step_out = feval(cfg.step_fns.prep03_untilica, subj_id, cfg, paths, helpers);
+
+Error in parallel_function>make_general_channel/channel_general (line 837)
+                    O = F(C{:});
+
+Error in parallel.internal.parfor.cppRemoteParallelFunction (line 53)
+            [out, outSize] = parallel.internal.pool.optionallySerialize(feval(channel, channelArgs{:}));

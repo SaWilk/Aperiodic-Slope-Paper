@@ -1,0 +1,22 @@
+[2026-02-18 16:40:38] === PIPELINE START 18-Feb-2026 16:40:38 ===
+[2026-02-18 16:40:38] root_dir  : Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\Aperiodic-Slope-Paper
+[2026-02-18 16:40:38] env.mode  : pc
+[2026-02-18 16:40:38] env.is_slurm: 0 | SLURM_JOB_ID= | SLURM_CLUSTER_NAME=
+[2026-02-18 16:40:38] paths.profile: pc_now
+[2026-02-18 16:40:38] bids_root : K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline
+[2026-02-18 16:40:38] out_root  : K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg
+[2026-02-18 16:40:38] overwrite : delete
+[2026-02-18 16:40:38] dry_run   : 0
+[2026-02-18 16:40:38] Step05: eye=0.80 mus=0.80 heart=0.80 line=0.80 ch=0.80 other=0.95 brain_min=0.05 edge=0.10
+[2026-02-18 16:40:38] Step06: ref=avg | epoch_mode=regular | regular=10s | baseline_apply=0 | baseline=[-200 0]ms | faster_z=3.00 robust=1
+[2026-02-18 16:40:39] Toolboxes initialized (master).
+[2026-02-18 16:40:39] Found 3 subject(s).
+[2026-02-18 16:40:39] Resolved worker count from feature(numcores)=10
+[2026-02-18 16:40:39] Parallel requested (10 workers).
+[2026-02-18 16:45:07] Parallel pool type: parallel.ProcessPool | thread_based=0
+[2026-02-18 16:47:49] === PIPELINE END 18-Feb-2026 16:47:49 ===
+[2026-02-18 16:47:49] Completed: 0 ok | 3 failed
+[2026-02-18 16:47:49] Failed subjects:
+[2026-02-18 16:47:49]   sub-001 | Unrecognized field name "apply_shared_epoch_rejection". | log=Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\Aperiodic-Slope-Paper\logs\runlog_pipeline\sub-001_20260218_164513_299_ERR.log
+[2026-02-18 16:47:49]   sub-002 | Unrecognized field name "apply_shared_epoch_rejection". | log=Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\Aperiodic-Slope-Paper\logs\runlog_pipeline\sub-002_20260218_164513_294_ERR.log
+[2026-02-18 16:47:49]   sub-003 | Unrecognized field name "apply_shared_epoch_rejection". | log=Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\Aperiodic-Slope-Paper\logs\runlog_pipeline\sub-003_20260218_164513_299_ERR.log

@@ -186,6 +186,15 @@ try
                 % weights
                 helpers.logmsg_default('ICA dims: nbchan=%d, icachansind=%d, icaweights=%s, icawinv=%s', ...
                 EEG.nbchan, numel(EEG.icachansind), mat2str(size(EEG.icaweights)), mat2str(size(EEG.icawinv)));
+
+                x = double(EEG.data);
+                bad_nonfinite = find(any(~isfinite(x),2));
+                bad_flat      = find(std(x,0,2) < 1e-6);   % adjust if your units are volts
+                bad_range     = find((max(x,[],2)-min(x,[],2)) < 1e-5);
+
+                disp('nonfinite channels:'); disp({EEG.chanlocs(bad_nonfinite).labels});
+                disp('near-flat channels:'); disp({EEG.chanlocs(unique([bad_flat; bad_range])).labels});
+
                 EEG = pop_subcomp(EEG, ic2rem, 0); % 0 = no confirm
             else
                 EEG.reject.gcompreject = false(1, nIC);

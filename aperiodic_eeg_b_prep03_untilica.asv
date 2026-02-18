@@ -452,41 +452,6 @@ else
     EEG.etc.interpolated_channel_labels  = {};
 end
 
-%% ========================================================================
-%  AVERAGE REFERENCE (EEG ONLY, CONFIGURABLE)
-% ========================================================================
-
-if isfield(step_cfg,'apply_average_reference') && step_cfg.apply_average_reference
-
-    eeg_idx = find(strcmpi({EEG.chanlocs.type}, 'EEG'));
-
-    if isempty(eeg_idx)
-        helpers.logmsg_default('prep03_untilica: WARNING no EEG channels found for average reference.');
-        EEG = helpers.append_eeg_comment(EEG, 'prep03_untilica: average reference skipped (no EEG channels)');
-    else
-
-        if step_cfg.average_ref_exclude_non_eeg
-            EEG = pop_reref(EEG, [], 'exclude', setdiff(1:EEG.nbchan, eeg_idx));
-            EEG = helpers.append_eeg_comment(EEG, ...
-                sprintf('prep03_untilica: average reference applied (EEG-only, n=%d)', numel(eeg_idx)));
-        else
-            EEG = pop_reref(EEG, []);
-            EEG = helpers.append_eeg_comment(EEG, ...
-                sprintf('prep03_untilica: average reference applied (all channels, n=%d)', EEG.nbchan));
-        end
-
-        EEG = eeg_checkset(EEG);
-
-        % Store bookkeeping
-        if ~isfield(EEG,'etc') || isempty(EEG.etc); EEG.etc = struct(); end
-        EEG.etc.average_reference_applied = true;
-    end
-
-else
-    EEG = helpers.append_eeg_comment(EEG, 'prep03_untilica: average reference skipped (config off)');
-    if ~isfield(EEG,'etc') || isempty(EEG.etc); EEG.etc = struct(); end
-    EEG.etc.average_reference_applied = false;
-end
 
 
 %% ========================================================================
@@ -565,30 +530,6 @@ end
 
 if ~cfg.io.dry_run
     ica_prep_eeg = helpers.safe_saveset(ica_prep_eeg, paths.prep03_out_dir_forica, sprintf('%s_forica.set', run_base_name), helpers, cfg);
-    % ======================================================================
-% SHARED EPOCH REJECTION FOR ICA (STRICT OR LENIENT VIA CONFIG)
-% ======================================================================
-
-if isfield(cfg,'prep03') && isfield(cfg.prep03,'shared_epoch_rejection')
-
-    reject_cfg = cfg.prep03.shared_epoch_rejection;
-
-    if reject_cfg.enable && ica_prep_eeg.trials > 0
-
-        [ica_prep_eeg, rej_info] = helpers.apply_shared_epoch_rejection( ...
-            ica_prep_eeg, reject_cfg);
-
-        ica_prep_eeg = helpers.append_eeg_comment( ...
-            ica_prep_eeg, ...
-            sprintf('prep03_untilica: SHARED rejection applied | rejected %d/%d epochs', ...
-            rej_info.n_rejected, rej_info.n_before));
-
-        helpers.logmsg_default('prep03_untilica: %s | ICA shared rejection %d/%d epochs rejected', ...
-            sprintf('sub-%s', subj_id), ...
-            rej_info.n_rejected, rej_info.n_before);
-    end
-end
-
 end
 ica_prep_eeg = helpers.append_eeg_comment(ica_prep_eeg, sprintf('prep03_untilica: saved forica: %s', out_forica));
 helpers.logmsg_default('prep03_untilica: saved forica (dry_run=%d): %s', cfg.io.dry_run, out_forica);

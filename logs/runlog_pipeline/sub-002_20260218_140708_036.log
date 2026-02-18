@@ -1,0 +1,5 @@
+[2026-02-18 14:07:08] --- START sub-002 ---
+[2026-02-18 14:07:09] EEGLAB initialized.
+[2026-02-18 14:07:09] Step 03: untilICA
+[2026-02-18 14:07:09] prep03_untilica: BIDS fallback: using vhdr=K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline\sub-002\ses-01\eeg\sub-002_ses-01_task-baseline_eeg.vhdr
+[2026-02-18 14:07:09] prep03_untilica: START sub-002 | sub-002_ses-01_task-baseline_eeg | input_source=bids_vhdr | input=K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline\sub-002\ses-01\eeg\sub-002_ses-01_task-baseline_eeg.vhdr

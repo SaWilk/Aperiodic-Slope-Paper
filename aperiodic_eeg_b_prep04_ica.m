@@ -157,25 +157,45 @@ for fi = 1:numel(forica_sets)
     preica_eeg   = helpers.append_eeg_comment(preica_eeg, 'prep04_ica: will apply ICA weights to _preica dataset');
     preica_eeg   = helpers.append_eeg_comment(preica_eeg, sprintf('prep04_ica: loaded preica=%s', char(preica_name)));
 
-    % ----- prereg rank logic -----
-    interpolated_count = 0;
-    if isfield(preica_eeg,'etc') && isfield(preica_eeg.etc,'interpolated_channel_indices') && ~isempty(preica_eeg.etc.interpolated_channel_indices)
-        interpolated_count = numel(preica_eeg.etc.interpolated_channel_indices);
-    elseif isfield(preica_eeg,'chaninfo') && isfield(preica_eeg.chaninfo,'bad') && ~isempty(preica_eeg.chaninfo.bad)
-        interpolated_count = numel(preica_eeg.chaninfo.bad);
-    end
+% ----- rank-safe PCA logic (compute rank on ACTUAL ICA dataset: forica) -----
+interpolated_count = 0;
+if isfield(preica_eeg,'etc') && isfield(preica_eeg.etc,'interpolated_channel_indices') && ~isempty(preica_eeg.etc.interpolated_channel_indices)
+    interpolated_count = numel(preica_eeg.etc.interpolated_channel_indices);
+elseif isfield(preica_eeg,'chaninfo') && isfield(preica_eeg.chaninfo,'bad') && ~isempty(preica_eeg.chaninfo.bad)
+    interpolated_count = numel(preica_eeg.chaninfo.bad);
+end
 
-    use_pca  = false;
-    pca_rank = [];
+% Compute numerical rank from ICA-training data (forica), not preica
+X = double(reshape(ica_prep_eeg.data, ica_prep_eeg.nbchan, ica_prep_eeg.pnts * ica_prep_eeg.trials));
+rank_forica = local_rank_svd(X);
 
-    if isfield(step_cfg,'use_pca_rank_if_interpolated') && step_cfg.use_pca_rank_if_interpolated && interpolated_count > 0
+% Decide whether to use PCA at all (only if rank deficiency exists)
+use_pca  = false;
+pca_rank = [];
+
+if isfield(step_cfg,'use_pca_rank_if_interpolated') && step_cfg.use_pca_rank_if_interpolated
+    if rank_forica < ica_prep_eeg.nbchan
         use_pca  = true;
-        pca_rank = max(ica_prep_eeg.nbchan - interpolated_count, 1);
-        ica_prep_eeg = helpers.append_eeg_comment(ica_prep_eeg, ...
-            sprintf('prep04_ica: prereg rank reduction: interpolated_count=%d => pca_rank=%d', interpolated_count, pca_rank));
+        pca_rank = max(rank_forica, 1);
+
+        ica_prep_eeg = helpers.append_eeg_comment(ica_prep_eeg, sprintf( ...
+            'prep04_ica: rank-safe PCA: nbchan=%d rank(forica)=%d interpolated_count(preica)=%d => pca_rank=%d', ...
+            ica_prep_eeg.nbchan, rank_forica, interpolated_count, pca_rank));
+
+        helpers.logmsg_default('prep04_ica: %s | %s | rank-safe PCA: nbchan=%d rank(forica)=%d interpolated_count(preica)=%d => pca_rank=%d', ...
+            subj_label, run_base, ica_prep_eeg.nbchan, rank_forica, interpolated_count, pca_rank);
     else
-        ica_prep_eeg = helpers.append_eeg_comment(ica_prep_eeg, 'prep04_ica: no PCA rank reduction applied');
+        ica_prep_eeg = helpers.append_eeg_comment(ica_prep_eeg, sprintf( ...
+            'prep04_ica: rank-safe PCA: nbchan=%d rank(forica)=%d => full-rank (no PCA)', ...
+            ica_prep_eeg.nbchan, rank_forica));
+
+        helpers.logmsg_default('prep04_ica: %s | %s | rank-safe PCA: nbchan=%d rank(forica)=%d => full-rank (no PCA)', ...
+            subj_label, run_base, ica_prep_eeg.nbchan, rank_forica);
     end
+else
+    ica_prep_eeg = helpers.append_eeg_comment(ica_prep_eeg, 'prep04_ica: rank-safe PCA disabled by config');
+end
+
 
     % ----- Run ICA -----
     switch ica_method
@@ -254,5 +274,32 @@ end
 step_out.ok = true;
 step_out.message = sprintf('prep04_ica: OK (%d output file(s)).', numel(outputs_written));
 step_out.outputs = outputs_written;
+
+function r = local_rank_svd(X)
+% Robust numerical rank via SVD with explicit tolerance.
+% X is [channels x samples].
+
+    if isempty(X) || any(~isfinite(X(:)))
+        % fallback: extremely conservative
+        r = size(X,1);
+        return;
+    end
+
+    % Center per-channel to reduce mean-offset issues
+    X = X - mean(X, 2);
+
+    s = svd(X, 'econ');
+    if isempty(s)
+        r = 0;
+        return;
+    end
+
+    % Explicit tolerance (similar spirit to MATLAB rank() but stable across scaling)
+    tol = max(size(X)) * eps(max(s)) * max(s);
+    r = sum(s > tol);
+
+    % Safety clamp
+    r = min(r, size(X,1));
+end
 
 end

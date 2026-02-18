@@ -1,0 +1,30 @@
+[2026-02-18 14:30:01] === PIPELINE START 18-Feb-2026 14:30:01 ===
+[2026-02-18 14:30:01] root_dir  : Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\Aperiodic-Slope-Paper
+[2026-02-18 14:30:01] env.mode  : pc
+[2026-02-18 14:30:02] env.is_slurm: 0 | SLURM_JOB_ID= | SLURM_CLUSTER_NAME=
+[2026-02-18 14:30:02] paths.profile: pc_now
+[2026-02-18 14:30:02] bids_root : K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline
+[2026-02-18 14:30:02] out_root  : K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg
+[2026-02-18 14:30:02] overwrite : delete
+[2026-02-18 14:30:02] dry_run   : 0
+[2026-02-18 14:30:02] Step05: eye=0.80 mus=0.80 heart=0.80 line=0.80 ch=0.80 other=0.95 brain_min=0.05 edge=0.10
+[2026-02-18 14:30:02] Step06: ref=avg | epoch_mode=regular | regular=10s | baseline_apply=0 | baseline=[-200 0]ms | faster_z=3.00 robust=1
+[2026-02-18 14:30:02] Toolboxes initialized (master).
+[2026-02-18 14:30:02] Found 1 subject(s).
+[2026-02-18 14:30:02] Resolved worker count from feature(numcores)=10
+[2026-02-18 14:30:02] Parallel requested (10 workers).
+[2026-02-18 14:30:03] WARNING: Parallel toolbox license unavailable (max users reached). Falling back to SERIAL. (Unable to check out a license for the Parallel Computing Toolbox.
+License checkout failed.
+License Manager Error -4
+Maximum number of users for Distrib_Computing_Toolbox reached. 
+Try again later.
+
+Troubleshoot this issue by visiting: 
+https://www.mathworks.com/support/lme/4
+
+Diagnostic Information:
+Feature: Distrib_Computing_Toolbox 
+License path: C:\Users\bbf7366\AppData\Roaming\MathWorks\MATLAB\R2023b_licenses;C:\Program Files\matlab\R2023b\licenses\license.dat;C:\Program Files\matlab\R2023b\licenses\network.lic 
+Licensing error: -4,132.)
+[2026-02-18 14:32:21] === PIPELINE END 18-Feb-2026 14:32:21 ===
+[2026-02-18 14:32:21] Completed: 1 ok | 0 failed

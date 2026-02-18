@@ -1,0 +1,30 @@
+[2026-02-18 15:51:27] --- START sub-003 ---
+[2026-02-18 15:51:43] EEGLAB initialized.
+[2026-02-18 15:51:43] Step 03: untilICA
+[2026-02-18 15:51:44] prep03_untilica: BIDS fallback: using vhdr=K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline\sub-003\ses-01\eeg\sub-003_ses-01_task-baseline_eeg.vhdr
+[2026-02-18 15:51:44] prep03_untilica: START sub-003 | sub-003_ses-01_task-baseline_eeg | input_source=bids_vhdr | input=K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline\sub-003\ses-01\eeg\sub-003_ses-01_task-baseline_eeg.vhdr
+[2026-02-18 15:51:54] Loaded BrainVision: K:\Wilken_Arbeitsordner\Raw_data\BIDS_RTGMN_Baseline\sub-003\ses-01\eeg\sub-003_ses-01_task-baseline_eeg.vhdr
+[2026-02-18 15:51:57] prep03_untilica: sub-003 | removing dead/invalid channels (global): IO2, Startle
+[2026-02-18 15:53:05] prep03_untilica: saved preica (dry_run=0): K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\02_until_ica\sub-003\sub-003_ses-01_task-baseline_eeg_preica.set
+[2026-02-18 15:53:11] prep03_untilica: saved forica (dry_run=0): K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\03_for_ica\sub-003\sub-003_ses-01_task-baseline_eeg_forica.set
+[2026-02-18 15:53:11] prep03_untilica: DONE sub-003 | sub-003_ses-01_task-baseline_eeg
+[2026-02-18 15:53:11] Step 04: ICA
+[2026-02-18 15:53:11] prep04_ica: sub-003 | sub-003_ses-01_task-baseline_eeg | all outputs exist -> delete + regenerate
+[2026-02-18 15:53:12] Loaded set: K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\03_for_ica\sub-003\sub-003_ses-01_task-baseline_eeg_forica.set
+[2026-02-18 15:53:13] Loaded set: K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\02_until_ica\sub-003\sub-003_ses-01_task-baseline_eeg_preica.set
+[2026-02-18 15:53:13] prep04_ica: sub-003 | sub-003_ses-01_task-baseline_eeg | rank-safe PCA: nbchan=64 rank(forica)=64 => full-rank (no PCA)
+[2026-02-18 15:57:22] prep04_ica: saved: K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\04_after_ica_runica\sub-003\sub-003_ses-01_task-baseline_eeg_ica_applied.set
+[2026-02-18 15:57:23] Step 05: IC rejection (ICLabel)
+[2026-02-18 15:57:24] prep05_after_ica: sub-003 | sub-003_ses-01_task-baseline_eeg | all outputs exist -> delete + regenerate
+[2026-02-18 15:57:25] Loaded set: K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\04_after_ica_runica\sub-003\sub-003_ses-01_task-baseline_eeg_ica_applied.set
+[2026-02-18 15:58:12] ICA dims: nbchan=64, icachansind=64, icaweights=[64 64], icawinv=[64 64]
+[2026-02-18 15:58:13] prep05_after_ica: saved: K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\05_until_epoching_runica\sub-003\sub-003_ses-01_task-baseline_eeg_until_epoching.set
+[2026-02-18 15:58:13] Step 06: epoching + final rejection
+[2026-02-18 15:58:13] prep06_epoching: sub-003 | sub-003_ses-01_task-baseline_eeg | partial outputs exist (1/2) -> regenerate
+[2026-02-18 15:58:14] Loaded set: K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\05_until_epoching_runica\sub-003\sub-003_ses-01_task-baseline_eeg_until_epoching.set
+[2026-02-18 15:58:14] prep06_epoching: sub-003 | sub-003_ses-01_task-baseline_eeg | derived 7 segments (open/closed).
+[2026-02-18 15:58:22] prep06_epoching: sub-003 | sub-003_ses-01_task-baseline_eeg | OPEN rejected=2/23 (FASTER=2, PTP=0) kept=21
+[2026-02-18 15:58:22] prep06_epoching: sub-003 | sub-003_ses-01_task-baseline_eeg | CLOSED rejected=3/21 (FASTER=3, PTP=0) kept=18
+[2026-02-18 15:58:22] prep06_epoching: saved OPEN: K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\06_epoched_runica\sub-003\sub-003_ses-01_task-baseline_eeg_cond-open_epoched_final.set
+[2026-02-18 15:58:23] prep06_epoching: saved CLOSED: K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg\06_epoched_runica\sub-003\sub-003_ses-01_task-baseline_eeg_cond-closed_epoched_final.set
+[2026-02-18 15:58:23] --- END sub-003 OK ---
