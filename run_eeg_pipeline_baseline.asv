@@ -87,7 +87,7 @@ switch cfg.paths.profile
 
     case "pc_now"
         cfg.paths.bids_root = fullfile('K:\Wilken_Arbeitsordner\Raw_data', DEFAULT_BIDS_FOLDER_NAME);
-        cfg.paths.out_root  = fullfile('K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg');
+        cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
 
     case "pc_shared"
         cfg.paths.bids_root = fullfile('Z:\pb\KLPSY1\KLPSY1-RTG\MATRICS\raw');
@@ -141,6 +141,7 @@ cfg.io.dry_run = false;
 % ========================================================================
 cfg.subjects = struct();
 cfg.subjects.list              = []; % empty = discover all from bids_root/sub-*
+cfg.subjects.min_id = "009";     % 
 
 %% ========================================================================
 %  CONFIG: PARALLELIZATION
@@ -229,10 +230,15 @@ cfg.prep03.ekg_channel_labels     = {'EKG'};
 % Downsample: 0 (none) | 250 | 500
 cfg.prep03.downsample_hz = 250;
 
+% Filters (applied to EEG+EOG only)
+cfg.prep03.highpass_hz          = 0.1;
+cfg.prep03.lowpass_hz           = 100;
+cfg.prep03.ica_prep_highpass_hz = 1;
+
 % Bad channel detection: "auto" (clean_rawdata) | "auto_rejchan" (pop_rejchan) | "off"
 cfg.prep03.detect_bad_channels_mode = "auto";
-cfg.prep03.auto_badchan_z_threshold  = 3.29;
-cfg.prep03.auto_badchan_freqrange_hz = [1 125];
+cfg.prep03.auto_badchan_z_threshold  = 2.5;
+cfg.prep03.auto_badchan_freqrange_hz = [1, cfg.prep03.lowpass_hz + 10];
 
 % clean_rawdata-style parameters
 cfg.prep03.emu_flatline_sec           = 5;
@@ -245,11 +251,6 @@ cfg.prep03.flat_channel_variance_epsilon = 0;   % 0 = exactly flat or invalid
 % Interpolation
 cfg.prep03.interpolate_bad_channels_before_ica = true;
 cfg.prep03.interp_method = 'spherical';
-
-% Filters (applied to EEG+EOG only)
-cfg.prep03.highpass_hz          = 0.1;
-cfg.prep03.lowpass_hz           = 100;
-cfg.prep03.ica_prep_highpass_hz = 1;
 
 % Line noise
 cfg.prep03.line_noise_method          = "pop_cleanline"; % "pop_cleanline" | "off"
@@ -355,14 +356,17 @@ cfg.prep06.do_baseline_correction = false;   %
 cfg.prep06.base_start_ms          = -200;   
 cfg.prep06.base_end_ms            = 0;      % default 0ms
 
+cfg.prep06.split_non_eeg_channels = true;
+cfg.prep06.eeg_only_keep_eog      = false;   % set true if you want HEOG/VEOG kept with EEG
+
 % ===== SHARED EPOCH REJECTION (FINAL STRICT VERSION) =====
 cfg.prep06.shared_epoch_rejection.enable        = true;
 cfg.prep06.shared_epoch_rejection.use_faster    = true;
-cfg.prep06.shared_epoch_rejection.faster_z      = 3;
-cfg.prep06.shared_epoch_rejection.use_robust_z  = true;
+cfg.prep06.shared_epoch_rejection.faster_z      = 2;
+cfg.prep06.shared_epoch_rejection.use_robust_z  = false;
 cfg.prep06.shared_epoch_rejection.use_ptp       = true;
-cfg.prep06.shared_epoch_rejection.ptp_uV_thresh = 600;
-cfg.prep06.shared_epoch_rejection.max_reject_prop = 0.25;
+cfg.prep06.shared_epoch_rejection.ptp_uV_thresh = 300;
+cfg.prep06.shared_epoch_rejection.max_reject_prop = 0.30;
 
 cfg.prep06.events_phase = { ...
     'S 201','S 241', ...

@@ -141,6 +141,7 @@ cfg.io.dry_run = false;
 % ========================================================================
 cfg.subjects = struct();
 cfg.subjects.list              = []; % empty = discover all from bids_root/sub-*
+cfg.subjects.min_id            = '009'; % if you want to run from one BIDS-formatted subject onwards, enter here lowest ID you want to analyze 
 
 %% ========================================================================
 %  CONFIG: PARALLELIZATION
@@ -229,10 +230,15 @@ cfg.prep03.ekg_channel_labels     = {'EKG'};
 % Downsample: 0 (none) | 250 | 500
 cfg.prep03.downsample_hz = 250;
 
+% Filters (applied to EEG+EOG only)
+cfg.prep03.highpass_hz          = 0.1;
+cfg.prep03.lowpass_hz           = 100;
+cfg.prep03.ica_prep_highpass_hz = 1;
+
 % Bad channel detection: "auto" (clean_rawdata) | "auto_rejchan" (pop_rejchan) | "off"
 cfg.prep03.detect_bad_channels_mode = "auto";
-cfg.prep03.auto_badchan_z_threshold  = 3.29;
-cfg.prep03.auto_badchan_freqrange_hz = [1 125];
+cfg.prep03.auto_badchan_z_threshold  = 2.5;
+cfg.prep03.auto_badchan_freqrange_hz = [1, cfg.prep03.lowpass_hz + 10];
 
 % clean_rawdata-style parameters
 cfg.prep03.emu_flatline_sec           = 5;
@@ -245,11 +251,6 @@ cfg.prep03.flat_channel_variance_epsilon = 0;   % 0 = exactly flat or invalid
 % Interpolation
 cfg.prep03.interpolate_bad_channels_before_ica = true;
 cfg.prep03.interp_method = 'spherical';
-
-% Filters (applied to EEG+EOG only)
-cfg.prep03.highpass_hz          = 0.1;
-cfg.prep03.lowpass_hz           = 100;
-cfg.prep03.ica_prep_highpass_hz = 1;
 
 % Line noise
 cfg.prep03.line_noise_method          = "pop_cleanline"; % "pop_cleanline" | "off"
@@ -787,24 +788,63 @@ end
 % ========================================================================
 function sub_ids = discover_subjects(cfg, helpers, master_log)
 
-sub_ids = cfg.subjects.list;
-
-if isempty(sub_ids)
+% 1) start from explicit list or discover from BIDS
+sub_ids = {};
+if isfield(cfg,'subjects') && isfield(cfg.subjects,'list') && ~isempty(cfg.subjects.list)
+    sub_ids = cfg.subjects.list;
+else
     ds = dir(fullfile(cfg.paths.bids_root, 'sub-*'));
     ds = ds([ds.isdir]);
-    sub_ids = cellfun(@(x) erase(x,'sub-'), {ds.name}, 'uni', false);
+    sub_ids = {ds.name};
+    sub_ids = cellfun(@(x) erase(x,'sub-'), sub_ids, 'uni', false);
 end
 
+% 2) normalize to cellstr of char (handles string arrays etc.)
+if isstring(sub_ids); sub_ids = cellstr(sub_ids); end
+if ischar(sub_ids);   sub_ids = {sub_ids};        end
 sub_ids = sub_ids(:);
-rx = cfg.constants.valid_sub_id_regex;
-sub_ids = sub_ids(~cellfun(@isempty, regexp(sub_ids, rx, 'once')));
+
+% 3) keep only valid 3-digit IDs
+rx = cfg.constants.valid_sub_id_regex;   % '^\d{3}$'
+keep = ~cellfun(@isempty, regexp(sub_ids, rx, 'once'));
+sub_ids = sub_ids(keep);
 
 if isempty(sub_ids)
-    error('No subjects found in %s', cfg.paths.bids_root);
+    error('No valid subject IDs found in %s (after regex filter).', cfg.paths.bids_root);
+end
+
+% 4) numeric sort (safe)
+sub_num = cellfun(@str2double, sub_ids);
+[~, ix] = sort(sub_num);
+sub_ids = sub_ids(ix);
+
+% 5) OPTIONAL min_id filter — only if it is present AND valid numeric
+use_min = false;
+min_id_num = NaN;
+
+if isfield(cfg,'subjects') && isfield(cfg.subjects,'min_id')
+    min_id_raw = cfg.subjects.min_id;
+
+    % treat [] / "" / '' as "feature off"
+    if ~(isempty(min_id_raw) || (isstring(min_id_raw) && strlength(min_id_raw)==0) || (ischar(min_id_raw) && isempty(strtrim(min_id_raw))))
+        min_id_num = str2double(string(min_id_raw));
+        use_min = ~isnan(min_id_num) && isfinite(min_id_num);
+    end
+end
+
+if use_min
+    sub_ids = sub_ids(cellfun(@str2double, sub_ids) >= min_id_num);
+end
+
+if isempty(sub_ids)
+    if use_min
+        error('No subjects remain after min_id >= %03d filter.', round(min_id_num));
+    else
+        error('No subjects remain after filtering (unexpected).');
+    end
 end
 
 end
-
 %% ========================================================================
 %  PARALLEL POLICY
 % ========================================================================
