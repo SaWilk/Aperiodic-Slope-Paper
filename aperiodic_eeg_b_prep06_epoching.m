@@ -49,6 +49,13 @@ try
         c.ptp_uV_thresh = 600;
     end
 
+        % ---- channel splitting defaults (for nicer EEGLAB scroll) ----
+    if ~isfield(c,'split_non_eeg_channels') || isempty(c.split_non_eeg_channels)
+        c.split_non_eeg_channels = true;   % save EEG-only + AUX-only datasets
+    end
+    if ~isfield(c,'save_aux_only_if_present') || isempty(c.save_aux_only_if_present)
+        c.save_aux_only_if_present = true; % skip AUX file if no AUX channels exist
+    end
 
     % regepoch settings
     if ~isfield(c,'regepoch_length_sec') || isempty(c.regepoch_length_sec)
@@ -79,26 +86,49 @@ try
         in_name  = in_sets(fi).name;
         run_base = erase(in_name, '_until_epoching.set');
 
-        % output paths (two conditions)
-        out_name_open   = run_base + "_cond-open_epoched_final.set";
-        out_name_closed = run_base + "_cond-closed_epoched_final.set";
+                % output paths (two or four files, depending on split flag)
+        base_open   = run_base + "_cond-open_epoched_final";
+        base_closed = run_base + "_cond-closed_epoched_final";
 
-        out_path_open   = fullfile(out_dir, char(out_name_open));
-        out_path_closed = fullfile(out_dir, char(out_name_closed));
+        if c.split_non_eeg_channels
+            out_name_open_eeg   = base_open   + "_EEG.set";
+            out_name_open_aux   = base_open   + "_AUX.set";
+            out_name_closed_eeg = base_closed + "_EEG.set";
+            out_name_closed_aux = base_closed + "_AUX.set";
 
-        % overwrite policy check: treat as a pair
-        [do_run, reason] = helpers.step_should_run_outputs({out_path_open, out_path_closed}, overwrite_mode, cfg);
+            out_path_open_eeg   = fullfile(out_dir, char(out_name_open_eeg));
+            out_path_open_aux   = fullfile(out_dir, char(out_name_open_aux));
+            out_path_closed_eeg = fullfile(out_dir, char(out_name_closed_eeg));
+            out_path_closed_aux = fullfile(out_dir, char(out_name_closed_aux));
+
+            out_files = {out_path_open_eeg, out_path_open_aux, out_path_closed_eeg, out_path_closed_aux};
+        else
+            out_name_open   = base_open   + ".set";
+            out_name_closed = base_closed + ".set";
+
+            out_path_open   = fullfile(out_dir, char(out_name_open));
+            out_path_closed = fullfile(out_dir, char(out_name_closed));
+
+            out_files = {out_path_open, out_path_closed};
+        end
+
+        % overwrite policy check: treat outputs as a group
+        [do_run, reason] = helpers.step_should_run_outputs(out_files, overwrite_mode, cfg);
         helpers.logmsg_default('prep06_epoching: %s | %s | %s', subj_label, run_base, string(reason));
 
         if ~do_run
-            outputs_written{end+1} = out_path_open;   %#ok<AGROW>
-            outputs_written{end+1} = out_path_closed; %#ok<AGROW>
+            for k = 1:numel(out_files)
+                outputs_written{end+1} = out_files{k}; %#ok<AGROW>
+            end
             continue;
         end
 
         if overwrite_mode == "delete" && ~cfg.io.dry_run
-            if exist(out_path_open,'file')==2;   helpers.safe_delete_set(out_path_open);   end
-            if exist(out_path_closed,'file')==2; helpers.safe_delete_set(out_path_closed); end
+            for k = 1:numel(out_files)
+                if exist(out_files{k}, 'file') == 2
+                    helpers.safe_delete_set(out_files{k});
+                end
+            end
         end
 
         % ---- load input ----
@@ -290,34 +320,121 @@ try
         end
 
         % =========================
-        % 5) Save outputs (two files)
+        % 4) Final epoch rejection (OPEN/CLOSED)
+        % =========================
+        if isfield(c,'do_artifact_rejection') && c.do_artifact_rejection ...
+                && isfield(cfg,'prep06') && isfield(cfg.prep06,'shared_epoch_rejection')
+
+            reject_cfg = cfg.prep06.shared_epoch_rejection;
+
+            if ~isempty(EEG_open) && EEG_open.trials > 0
+                [EEG_open, info_open] = helpers.apply_shared_epoch_rejection(EEG_open, reject_cfg);
+                helpers.logmsg_default('prep06_epoching: OPEN rejection: %d/%d epochs removed', ...
+                    info_open.n_rejected, info_open.n_before);
+            end
+
+            if ~isempty(EEG_closed) && EEG_closed.trials > 0
+                [EEG_closed, info_closed] = helpers.apply_shared_epoch_rejection(EEG_closed, reject_cfg);
+                helpers.logmsg_default('prep06_epoching: CLOSED rejection: %d/%d epochs removed', ...
+                    info_closed.n_rejected, info_closed.n_before);
+            end
+        end
+
+        % =========================
+        % 5) Save outputs
         % =========================
         wrote_any = false;
 
-        if ~isempty(EEG_open) && EEG_open.trials > 0
-            EEG_open.setname = char(run_base + "_cond-open_epoched_final");
-            EEG_open = helpers.append_eeg_comment(EEG_open, 'FINAL OUTPUT: eyes OPEN regepochs');
-            if ~cfg.io.dry_run
-                EEG_open = helpers.safe_saveset(EEG_open, out_dir, char(out_name_open), helpers, cfg);
-            end
-            helpers.logmsg_default('prep06_epoching: saved OPEN: %s', out_path_open);
-            outputs_written{end+1} = out_path_open; %#ok<AGROW>
-            wrote_any = true;
-        end
+        if c.split_non_eeg_channels
 
-        if ~isempty(EEG_closed) && EEG_closed.trials > 0
-            EEG_closed.setname = char(run_base + "_cond-closed_epoched_final");
-            EEG_closed = helpers.append_eeg_comment(EEG_closed, 'FINAL OUTPUT: eyes CLOSED regepochs');
-            if ~cfg.io.dry_run
-                EEG_closed = helpers.safe_saveset(EEG_closed, out_dir, char(out_name_closed), helpers, cfg);
+            % ---------- OPEN ----------
+            if ~isempty(EEG_open) && EEG_open.trials > 0
+                [idx_eeg_keep, idx_aux_keep] = split_channel_indices(EEG_open);
+
+                EEG_open_eeg = pop_select(EEG_open, 'channel', idx_eeg_keep);
+                EEG_open_eeg = eeg_checkset(EEG_open_eeg);
+                EEG_open_eeg.setname = char(base_open + "_EEG");
+                EEG_open_eeg = helpers.append_eeg_comment(EEG_open_eeg, 'FINAL OUTPUT: eyes OPEN (EEG-only channels)');
+
+                if ~cfg.io.dry_run
+                    EEG_open_eeg = helpers.safe_saveset(EEG_open_eeg, out_dir, char(out_name_open_eeg), helpers, cfg);
+                end
+                helpers.logmsg_default('prep06_epoching: saved OPEN EEG-only: %s', out_path_open_eeg);
+                outputs_written{end+1} = out_path_open_eeg; %#ok<AGROW>
+                wrote_any = true;
+
+if (~c.save_aux_only_if_present) || (numel(idx_aux_keep) > 0)                    
+    EEG_open_aux = pop_select(EEG_open, 'channel', idx_aux_keep);
+                    EEG_open_aux = eeg_checkset(EEG_open_aux);
+                    EEG_open_aux.setname = char(base_open + "_AUX");
+                    EEG_open_aux = helpers.append_eeg_comment(EEG_open_aux, 'FINAL OUTPUT: eyes OPEN (AUX-only channels)');
+
+                    if ~cfg.io.dry_run
+                        EEG_open_aux = helpers.safe_saveset(EEG_open_aux, out_dir, char(out_name_open_aux), helpers, cfg);
+                    end
+                    helpers.logmsg_default('prep06_epoching: saved OPEN AUX-only: %s', out_path_open_aux);
+                    outputs_written{end+1} = out_path_open_aux; %#ok<AGROW>
+                end
             end
-            helpers.logmsg_default('prep06_epoching: saved CLOSED: %s', out_path_closed);
-            outputs_written{end+1} = out_path_closed; %#ok<AGROW>
-            wrote_any = true;
+
+            % ---------- CLOSED ----------
+            if ~isempty(EEG_closed) && EEG_closed.trials > 0
+                [idx_eeg_keep, idx_aux_keep] = split_channel_indices(EEG_closed);
+
+                EEG_closed_eeg = pop_select(EEG_closed, 'channel', idx_eeg_keep);
+                EEG_closed_eeg = eeg_checkset(EEG_closed_eeg);
+                EEG_closed_eeg.setname = char(base_closed + "_EEG");
+                EEG_closed_eeg = helpers.append_eeg_comment(EEG_closed_eeg, 'FINAL OUTPUT: eyes CLOSED (EEG-only channels)');
+
+                if ~cfg.io.dry_run
+                    EEG_closed_eeg = helpers.safe_saveset(EEG_closed_eeg, out_dir, char(out_name_closed_eeg), helpers, cfg);
+                end
+                helpers.logmsg_default('prep06_epoching: saved CLOSED EEG-only: %s', out_path_closed_eeg);
+                outputs_written{end+1} = out_path_closed_eeg; %#ok<AGROW>
+                wrote_any = true;
+
+                if ~isempty(idx_aux_keep) && (~c.save_aux_only_if_present || numel(idx_aux_keep) > 0)
+                    EEG_closed_aux = pop_select(EEG_closed, 'channel', idx_aux_keep);
+                    EEG_closed_aux = eeg_checkset(EEG_closed_aux);
+                    EEG_closed_aux.setname = char(base_closed + "_AUX");
+                    EEG_closed_aux = helpers.append_eeg_comment(EEG_closed_aux, 'FINAL OUTPUT: eyes CLOSED (AUX-only channels)');
+
+                    if ~cfg.io.dry_run
+                        EEG_closed_aux = helpers.safe_saveset(EEG_closed_aux, out_dir, char(out_name_closed_aux), helpers, cfg);
+                    end
+                    helpers.logmsg_default('prep06_epoching: saved CLOSED AUX-only: %s', out_path_closed_aux);
+                    outputs_written{end+1} = out_path_closed_aux; %#ok<AGROW>
+                end
+            end
+
+        else
+            % ------- old behavior: save full channel sets only -------
+            if ~isempty(EEG_open) && EEG_open.trials > 0
+                EEG_open.setname = char(base_open);
+                EEG_open = helpers.append_eeg_comment(EEG_open, 'FINAL OUTPUT: eyes OPEN regepochs');
+                if ~cfg.io.dry_run
+                    EEG_open = helpers.safe_saveset(EEG_open, out_dir, char(out_name_open), helpers, cfg);
+                end
+                helpers.logmsg_default('prep06_epoching: saved OPEN: %s', out_path_open);
+                outputs_written{end+1} = out_path_open; %#ok<AGROW>
+                wrote_any = true;
+            end
+
+            if ~isempty(EEG_closed) && EEG_closed.trials > 0
+                EEG_closed.setname = char(base_closed);
+                EEG_closed = helpers.append_eeg_comment(EEG_closed, 'FINAL OUTPUT: eyes CLOSED regepochs');
+                if ~cfg.io.dry_run
+                    EEG_closed = helpers.safe_saveset(EEG_closed, out_dir, char(out_name_closed), helpers, cfg);
+                end
+                helpers.logmsg_default('prep06_epoching: saved CLOSED: %s', out_path_closed);
+                outputs_written{end+1} = out_path_closed; %#ok<AGROW>
+                wrote_any = true;
+            end
         end
 
         if ~wrote_any
-            helpers.logmsg_default('prep06_epoching: %s | %s | WARNING: no OPEN/CLOSED output written (no full 10s epochs or excluded).', subj_label, run_base);
+            helpers.logmsg_default('prep06_epoching: %s | %s | WARNING: no output written (no full 10s epochs or excluded).', ...
+                subj_label, run_base);
         end
 
     end % in_sets loop
@@ -330,4 +447,21 @@ catch me
     step_out.ok = false;
     step_out.message = sprintf('prep06_epoching: %s', me.message);
 end
+
+        % helper inline to get indices (robust if type missing)
+        function [idx_keep_eeg, idx_keep_aux] = split_channel_indices(EEGtmp)
+            if isfield(EEGtmp,'chanlocs') && ~isempty(EEGtmp.chanlocs) && isfield(EEGtmp.chanlocs,'type')
+                types = lower(string({EEGtmp.chanlocs.type}));
+                idx_keep_eeg = find(types == "eeg");
+                if isempty(idx_keep_eeg)
+                    idx_keep_eeg = (1:EEGtmp.nbchan)'; % fallback if typing missing
+                else
+                    idx_keep_eeg = idx_keep_eeg(:);
+                end
+                idx_keep_aux = setdiff((1:EEGtmp.nbchan)', idx_keep_eeg); % includes EOG + all non-EEG
+            else
+                idx_keep_eeg = (1:EEGtmp.nbchan)';
+                idx_keep_aux = [];
+            end
+        end
 end

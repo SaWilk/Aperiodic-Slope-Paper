@@ -1,4 +1,4 @@
-function run_eeg_pipeline(varargin)
+function run_eeg_pipeline_baseline(varargin)
 % RUN_EEG_PIPELINE Saskia Wilken / Saskia Wilken / DEZ 2025 driver for PROOF EEG preprocessing (PC / server / HPC).
 %
 % Goals / conventions:
@@ -35,7 +35,7 @@ cfg = struct();
 cfg.constants = struct();
 cfg.constants.valid_sub_id_regex = '^\d{3}$';   % exactly 3 digits
 
-cfg.constants.log_prefix_master  = 'run_eeg_pipeline';
+cfg.constants.log_prefix_master  = 'run_eeg_pipeline_baseline';
 cfg.constants.log_prefix_subject = 'sub';
 
 cfg.constants.datestr_master  = 'yyyymmdd_HHMMSS';
@@ -87,7 +87,7 @@ switch cfg.paths.profile
 
     case "pc_now"
         cfg.paths.bids_root = fullfile('K:\Wilken_Arbeitsordner\Raw_data', DEFAULT_BIDS_FOLDER_NAME);
-        cfg.paths.out_root  = fullfile('K:\Wilken_Arbeitsordner\Preprocessed_data\Aperiodic_Signal\eeg');
+        cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
 
     case "pc_shared"
         cfg.paths.bids_root = fullfile('Z:\pb\KLPSY1\KLPSY1-RTG\MATRICS\raw');
@@ -355,14 +355,17 @@ cfg.prep06.do_baseline_correction = false;   %
 cfg.prep06.base_start_ms          = -200;   
 cfg.prep06.base_end_ms            = 0;      % default 0ms
 
+cfg.prep06.split_non_eeg_channels = true;
+cfg.prep06.eeg_only_keep_eog      = false;   % set true if you want HEOG/VEOG kept with EEG
+
 % ===== SHARED EPOCH REJECTION (FINAL STRICT VERSION) =====
 cfg.prep06.shared_epoch_rejection.enable        = true;
 cfg.prep06.shared_epoch_rejection.use_faster    = true;
-cfg.prep06.shared_epoch_rejection.faster_z      = 3;
-cfg.prep06.shared_epoch_rejection.use_robust_z  = true;
+cfg.prep06.shared_epoch_rejection.faster_z      = 2;
+cfg.prep06.shared_epoch_rejection.use_robust_z  = false;
 cfg.prep06.shared_epoch_rejection.use_ptp       = true;
-cfg.prep06.shared_epoch_rejection.ptp_uV_thresh = 600;
-cfg.prep06.shared_epoch_rejection.max_reject_prop = 0.25;
+cfg.prep06.shared_epoch_rejection.ptp_uV_thresh = 300;
+cfg.prep06.shared_epoch_rejection.max_reject_prop = 0.30;
 
 cfg.prep06.events_phase = { ...
     'S 201','S 241', ...
@@ -573,9 +576,6 @@ end
 
 end % run_eeg_pipeline
 
-%% ========================================================================
-%  SUBJECT RUNNER (parfor-safe: self-contained)
-% ========================================================================
 %% ========================================================================
 %  SUBJECT RUNNER (parfor-safe: self-contained)
 % ========================================================================
