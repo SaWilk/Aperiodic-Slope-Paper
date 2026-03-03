@@ -1,15 +1,6 @@
 %% aperiodic_fooof_04_group_stats_cluster.m
-% Extended version with:
-% - both conditions
-% - shared winsorized color scales
-% - pairwise RAW exponent difference topos + Cohen's d topos
-% - significant electrodes marked with dark-brown X in ALL pairwise diff plots
-% - significant-cluster spectra plots (only when clusters exist)
-% - spectra titles include electrode list; only the 2 groups in the contrast
-% - cluster tables only when something is significant; include electrode lists
-% - semicolon-separated tables
 %
-% Saskia Wilken – fixed & extended
+% Saskia Wilken 
 
 clear; clc;
 
