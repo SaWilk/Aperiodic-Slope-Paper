@@ -141,7 +141,7 @@ cfg.io.dry_run = false;
 % ========================================================================
 cfg.subjects = struct();
 cfg.subjects.list              = []; % empty = discover all from bids_root/sub-*
-cfg.subjects.min_id            = '137'; % if you want to run from one BIDS-formatted subject onwards, enter here lowest ID you want to analyze 
+cfg.subjects.min_id            = '143'; % if you want to run from one BIDS-formatted subject onwards, enter here lowest ID you want to analyze 
 
 %% ========================================================================
 %  CONFIG: PARALLELIZATION
