@@ -1,0 +1,328 @@
+%% aperiodic_fooof_04_group_stats_cluster.m
+% Extended version with:
+% - both conditions
+% - shared winsorized color scales
+% - effect size (Cohen's d) topos
+% - full-brain spectra + fitted FOOOF lines
+% - semicolon tables
+% - labeled colorbars
+
+clear; clc;
+
+%% ---------------- CONFIG ----------------
+root     = 'Z:\pb\KPP_KPN_joined\Aperiodic\Saskia';
+rawDir   = fullfile(root, 'rawdata');
+derivDir = fullfile(root, 'derivatives');
+
+fooofRoot = fullfile(derivDir, '08_fooof');
+psdRoot   = fullfile(derivDir, '07_psd_welch');
+
+outBase = fullfile(fooofRoot, 'stats_extended');
+if ~exist(outBase,'dir'); mkdir(outBase); end
+
+alpha_cluster = 0.05;
+alpha_test    = 0.05;
+nperm         = 2000;
+groups        = ["HC","CHR","PP"];
+pairs         = {
+    "HC","CHR"
+    "HC","PP"
+    "CHR","PP"
+};
+
+COL = struct();
+COL.HC  = [0.15 0.55 0.25];
+COL.CHR = [0.85 0.35 0.15];
+COL.PP  = [0.20 0.45 0.85];
+
+%% ---------------- EEGLAB + FIELDTRIP ----------------
+eeglabDir = 'K:\Wilken_Arbeitsordner\MATLAB\eeglab_current\eeglab2025.1.0';
+addpath(eeglabDir); eeglab('nogui');
+
+chanloc_set = fullfile(derivDir,'06_epoched_runica','sub-002',...
+    'sub-002_ses-01_task-baseline_eeg_cond-closed_epoched_final_EEG.set');
+EEGref   = pop_loadset(chanloc_set);
+chanlocs = EEGref.chanlocs;
+labels   = {chanlocs.labels};
+ft_defaults;
+
+%% ---------------- FIELDTRIP NEIGHBOURS (REQUIRED FOR CLUSTER) ----------------
+% Make sure FieldTrip is on path and initialized
+ft_defaults;
+
+% Build electrode struct from EEGLAB chanlocs
+elec = [];
+elec.label = labels(:);
+
+% Use X/Y/Z from chanlocs (must exist)
+if ~all(isfield(chanlocs, {'X','Y','Z'}))
+    error('chanlocs missing X/Y/Z fields. Cannot build neighbours for clustering.');
+end
+
+xyz = [[chanlocs.X]' [chanlocs.Y]' [chanlocs.Z]'];
+
+% Remove channels without coordinates (NaN)
+good = all(isfinite(xyz),2);
+elec.label  = elec.label(good);
+elec.elecpos = xyz(good,:);
+elec.chanpos = elec.elecpos;
+elec.unit   = 'mm';
+
+% Also reduce labels to "good" only (IMPORTANT: must match expMat columns)
+labels_good = elec.label(:);
+
+% If you want to keep *all* channels in expMat, you must ensure none are NaN.
+labels = cellstr(labels_good);     % overwrite labels for FT
+chanlocs = chanlocs(ismember({chanlocs.labels}, labels));  % keep same order
+
+cfgN = [];
+cfgN.method   = 'triangulation';
+cfgN.channel  = labels;
+cfgN.elec     = elec;
+cfgN.feedback = 'no';
+
+neigh = ft_prepare_neighbours(cfgN);
+
+%% ---------------- LOAD PARTICIPANTS ----------------
+Traw = readtable(fullfile(rawDir,'participants.xlsx'), 'VariableNamingRule','preserve');
+Traw.Group = upper(string(Traw.Group));
+Traw.sub   = string(arrayfun(@(x)sprintf('sub-%03d',x),Traw.VPNummer,'uni',0));
+Traw = Traw(ismember(Traw.Group,groups),:);
+
+%% =====================================================================
+%% ==================== LOOP OVER CONDITIONS ===========================
+%% =====================================================================
+
+for cond_to_use = ["open","closed"]
+
+fprintf('\n=========== CONDITION: %s ===========\n', cond_to_use);
+
+%% ---------- Load exponents ----------
+% IMPORTANT: keep T as a table by subsetting Traw afterwards
+
+expMat   = [];
+keepRows = false(height(Traw),1);
+
+for i = 1:height(Traw)
+
+    sub = char(Traw.sub(i));
+    f = fullfile(fooofRoot, sub, sprintf('%s_desc-fooof_cond-%s.mat', sub, cond_to_use));
+
+    if ~exist(f,'file')
+        continue;
+    end
+
+    S = load(f);
+
+    if ~isfield(S,'exps') || isempty(S.exps)
+        continue;
+    end
+
+    exps = S.exps(:)';  % force row
+    if isempty(expMat)
+        expMat = nan(height(Traw), numel(exps)); % preallocate once we know nChan
+    end
+
+    % guard: channel length must match
+    if numel(exps) ~= size(expMat,2)
+        fprintf('SKIP %s: exponent length mismatch (%d vs %d)\n', sub, numel(exps), size(expMat,2));
+        continue;
+    end
+
+    expMat(i,:) = exps;
+    keepRows(i) = true;
+end
+
+% keep only subjects with data
+T = Traw(keepRows,:);
+expMat = expMat(keepRows,:);
+
+if isempty(T)
+    error('No subjects with usable FOOOF output found for cond=%s', cond_to_use);
+end
+
+%% ---------- Group Means ----------
+grpMean = struct();
+grpSD   = struct();
+
+for g = groups
+    idx = T.Group==g;
+    grpMean.(g) = mean(expMat(idx,:),1,'omitnan')';
+    grpSD.(g)   = std(expMat(idx,:),0,1,'omitnan')';
+end
+
+%% ---------- Shared Color Scales ----------
+absVals = cell2mat(struct2cell(grpMean));
+absLim  = prctile(absVals(:),[5 95]);
+
+diffVals = [];
+for p = 1:size(pairs,1)
+    g1=pairs{p,1}; g2=pairs{p,2};
+    diffVals = [diffVals; grpMean.(g1)-grpMean.(g2)]; %#ok<AGROW>
+end
+diffLimAbs = prctile(abs(diffVals),95);
+diffLim = [-diffLimAbs diffLimAbs];
+
+%% ---------- Plot Mean Topos ----------
+for g = groups
+    fig = figure; 
+    topoplot(grpMean.(g),chanlocs,'maplimits',absLim);
+    cb=colorbar; ylabel(cb,'Aperiodic exponent');
+    title(sprintf('%s mean (%s)',g,cond_to_use));
+    saveas(fig,fullfile(outBase,...
+        sprintf('meanTopo_%s_%s.png',g,cond_to_use)));
+    close(fig);
+end
+
+%% ---------- Effect Size (Cohen's d) ----------
+for p = 1:size(pairs,1)
+
+    g1 = pairs{p,1}; g2 = pairs{p,2};
+    idx1 = T.Group==g1;
+    idx2 = T.Group==g2;
+
+    m1=grpMean.(g1); m2=grpMean.(g2);
+    s1=grpSD.(g1);   s2=grpSD.(g2);
+    n1=sum(idx1); n2=sum(idx2);
+
+    pooled = sqrt(((n1-1).*s1.^2 + (n2-1).*s2.^2)./(n1+n2-2));
+    d = (m1-m2)./pooled;
+
+    fig=figure;
+    topoplot(d,chanlocs,'maplimits',diffLim);
+    cb=colorbar; ylabel(cb,'Cohen''s d');
+    title(sprintf('Effect size %s-%s (%s)',g1,g2,cond_to_use));
+    saveas(fig,fullfile(outBase,...
+        sprintf('effectsize_%s_minus_%s_%s.png',g1,g2,cond_to_use)));
+    close(fig);
+end
+
+%% ---------- Whole-brain spectra + FOOOF ----------
+freqsAll = [];
+PSDg = struct(); Fitg = struct();
+
+for g = groups
+    idx = find(T.Group==g);
+    psdSub=[]; fitSub=[];
+    for i = idx'
+        sub=char(T.sub(i));
+        psdFile = fullfile(psdRoot,sub,...
+            sprintf('%s_desc-psd_method-welch_freqres-0p50_cond-%s.mat',sub,cond_to_use));
+        fooofFile = fullfile(fooofRoot,sub,...
+            sprintf('%s_desc-fooof_cond-%s.mat',sub,cond_to_use));
+        if ~exist(psdFile,'file')||~exist(fooofFile,'file'); continue; end
+
+        P=load(psdFile); F=load(fooofFile);
+
+        freqs = P.freqs(:);
+        if isempty(freqsAll); freqsAll=freqs; end
+
+        key="PSDclosed"; if cond_to_use=="open"; key="PSDopen"; end
+        psdMean=mean(P.(key),2,'omitnan');
+
+        % reconstruct FOOOF aperiodic fit averaged across channels
+        expMean = mean(F.exps);
+        offMean = mean(F.offsets);
+        fit = 10.^(offMean - expMean.*log10(freqs));
+
+        psdSub=[psdSub psdMean]; %#ok<AGROW>
+        fitSub=[fitSub fit]; %#ok<AGROW>
+    end
+
+    PSDg.(g)=mean(psdSub,2,'omitnan');
+    Fitg.(g)=mean(fitSub,2,'omitnan');
+end
+
+fig=figure; hold on;
+for g=groups
+    plot(freqsAll,PSDg.(g),'Color',COL.(g),'LineWidth',2);
+    plot(freqsAll,Fitg.(g),'--','Color',COL.(g),'LineWidth',2);
+end
+set(gca,'XScale','log','YScale','log');
+xlabel('Frequency (Hz)'); ylabel('PSD');
+legend({'HC','HC fit','CHR','CHR fit','PP','PP fit'});
+title(sprintf('Whole-brain spectra + FOOOF (%s)',cond_to_use));
+saveas(fig,fullfile(outBase,...
+    sprintf('wholebrainSpectra_%s.png',cond_to_use)));
+close(fig);
+
+%% ============================================================
+%% ---------------- CLUSTER PERMUTATION -----------------------
+%% ============================================================
+
+fprintf('Running cluster stats for %s...\n', cond_to_use);
+
+% --- Prepare FT structs ---
+subsFT = cell(height(T),1);
+for i = 1:height(T)
+    D = [];
+    D.label  = labels(:);
+    D.time   = 0;
+    D.dimord = 'chan_time';
+    D.avg    = expMat(i,:)' ;
+    subsFT{i} = D;
+end
+
+%% ---------- Omnibus ANOVA ----------
+design = zeros(1,height(T));
+design(T.Group=="HC")  = 1;
+design(T.Group=="CHR") = 2;
+design(T.Group=="PP")  = 3;
+
+cfg = [];
+cfg.method            = 'montecarlo';
+cfg.statistic         = 'indepsamplesF';
+cfg.correctm          = 'cluster';
+cfg.clusteralpha      = alpha_cluster;
+cfg.clusterstatistic  = 'maxsum';
+cfg.minnbchan         = 2;
+cfg.neighbours        = neigh;
+cfg.tail              = 1;
+cfg.clustertail       = 1;
+cfg.alpha             = alpha_test;
+cfg.numrandomization  = nperm;
+cfg.design            = design;
+cfg.ivar              = 1;
+
+statF = ft_timelockstatistics(cfg, subsFT{:});
+
+save(fullfile(outBase,...
+    sprintf('stat_clusterANOVA_%s.mat',cond_to_use)), 'statF');
+
+write_cluster_table(statF,...
+    sprintf('ANOVA_%s',cond_to_use),...
+    fullfile(outBase,...
+    sprintf('clusters_ANOVA_%s.csv',cond_to_use)));
+
+%% ---------- Pairwise ----------
+for p = 1:size(pairs,1)
+
+    g1 = pairs{p,1}; g2 = pairs{p,2};
+
+    idx1 = find(T.Group==g1);
+    idx2 = find(T.Group==g2);
+
+    design2 = [ones(1,numel(idx1)), 2*ones(1,numel(idx2))];
+
+    cfg.statistic = 'indepsamplesT';
+    cfg.tail      = 0;
+    cfg.clustertail = 0;
+    cfg.design    = design2;
+
+    statT = ft_timelockstatistics(cfg,...
+        subsFT{idx1}, subsFT{idx2});
+
+    save(fullfile(outBase,...
+        sprintf('stat_cluster_%s_vs_%s_%s.mat',g1,g2,cond_to_use)),...
+        'statT');
+
+    write_cluster_table(statT,...
+        sprintf('%s_vs_%s_%s',g1,g2,cond_to_use),...
+        fullfile(outBase,...
+        sprintf('clusters_%s_vs_%s_%s.csv',g1,g2,cond_to_use)));
+
+end
+
+end % condition loop
+
+fprintf('\nDONE.\n');

@@ -141,7 +141,7 @@ cfg.io.dry_run = false;
 % ========================================================================
 cfg.subjects = struct();
 cfg.subjects.list              = []; % empty = discover all from bids_root/sub-*
-cfg.subjects.min_id            = '009'; % if you want to run from one BIDS-formatted subject onwards, enter here lowest ID you want to analyze 
+cfg.subjects.min_id            = '137'; % if you want to run from one BIDS-formatted subject onwards, enter here lowest ID you want to analyze 
 
 %% ========================================================================
 %  CONFIG: PARALLELIZATION
@@ -347,7 +347,7 @@ cfg.prep06.use_faster = true;   % if you want it
 
 cfg.prep06.epoching_mode = "regular";
 cfg.prep06.regepoch_length_sec = 10;
-cfg.prep06.regepoch_step_sec   = 10;
+cfg.prep06.regepoch_step_sec   = 5; % if this is shorter than the length this will lead to overlapping epochs
 
 cfg.prep06.epoch_start_s   = -0.4;
 cfg.prep06.epoch_end_s     =  2.6;
