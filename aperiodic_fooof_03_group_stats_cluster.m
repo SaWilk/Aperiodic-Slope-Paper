@@ -74,6 +74,8 @@ eeglabDir = 'K:\Wilken_Arbeitsordner\MATLAB\eeglab_current\eeglab2025.1.0';
 addpath(eeglabDir);
 try, eeglab('nogui'); catch, addpath(genpath(eeglabDir)); eeglab('nogui'); end
 
+ftDir = 'K:\Wilken_Arbeitsordner\MATLAB\fieldtrip-20260227';
+addpath(ftDir);
 ft_defaults;
 
 chanloc_set = fullfile(derivDir,'06_epoched_runica','sub-002', ...
@@ -325,7 +327,7 @@ for cond_to_use = ["open","closed"]
         fig = figure('Visible','off','Color','none');
         ax = axes(fig); %#ok<NASGU>
         topoplot(topoDiffRaw, chanlocs, 'maplimits', diffLim, 'electrodes','on', ...
-            'emarker2', {sigIdx, 'x', XCOL_RAW, XSIZE, XW});
+            'emarker2', {sigIdx, '*', XCOL_RAW, XSIZE, XW});
         cb=colorbar; ylabel(cb,'\Delta exponent (raw)');
         title(sprintf('RAW diff exponent: %s - %s | %s | %s | sigCh=%d', ...
             g1, g2, cond_to_use, pStr, numel(sigIdx)), 'Interpreter','none');
@@ -663,8 +665,8 @@ fig = figure('Visible','off','Color','none','Position',[100 100 1050 480]);
 ax = axes(fig); hold(ax,'on');
 
 for gg = groups2
-    plot(ax, freqsRef, PSDm.(gg), 'LineWidth', 2.2, 'Color', COL.(char(gg)));
-    plot(ax, freqsRef, FITm.(gg), '--', 'LineWidth', 2.0, 'Color', COL.(char(gg)));
+    plot(ax, freqsRef, PSDm.(gg), 'LineWidth', 3, 'Color', COL.(char(gg)));
+    plot(ax, freqsRef, FITm.(gg), '--', 'LineWidth', 2.7, 'Color', COL.(char(gg)));
 end
 
 set(ax,'XScale','log','YScale','log');
