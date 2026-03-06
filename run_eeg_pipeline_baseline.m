@@ -1309,9 +1309,10 @@ try
     EEG.data(subset_indices, :) = EEG_tmp.data;
     did_apply = true;
 
-catch
+catch me
     EEG.data = original_data;
     did_apply = false;
+    warning('apply_pop_cleanline_to_subset failed: %s', me.message);
 end
 
 EEG = eeg_checkset(EEG);
