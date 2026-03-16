@@ -15,14 +15,14 @@ function run_eeg_pipeline_baseline(varargin)
 % Step function signature:
 %   step_out = proof_eeg_cf_prepXX_step(subj_id, cfg, paths, helpers)
 %
-% MATLAB R2023a 
+% MATLAB R2023a
 
 %% HOW TO USE
 %
 % Expects outputs form the 01_BIDS_formatting function
 
 %% ========================================================================
-%  CONSTANTS 
+%  CONSTANTS
 % ========================================================================
 DEFAULT_BIDS_FOLDER_NAME   = 'BIDS_RTGMN_Baseline';
 LOG_SUBDIR_RUNLOG          = fullfile('logs', 'runlog_pipeline');
@@ -46,17 +46,16 @@ cfg.this_file = mfilename('fullpath');
 cfg.root_dir  = fileparts(cfg.this_file);
 
 % Environment mode toggles behavior (paths/parallel defaults, etc.)
-%   "pc"     -> typically serial (or modest parallel), interactive-friendly
-%   "server" -> parallel ok
-%   "hpc"    -> parallel + SLURM-aware worker count
 cfg.env = struct();
 
 % --- Auto-detect environment (can be overridden by env var PROOF_ENV_MODE)
-cfg.env.mode = detect_env_mode();  % "pc" | "server" | "hpc"
+cfg.env.mode         = detect_env_mode();       % "pc" | "server" | "hpc"
+cfg.env.machine_kind = detect_machine_kind();   % "local_windows" | "server_windows" | "hpc_hummel" | "unknown"
+cfg.env.hostname     = get_hostname();
 
 % Optional: keep info for logging
-cfg.env.is_slurm = ~isempty(getenv('SLURM_JOB_ID'));
-cfg.env.slurm_job_id = string(getenv_or_empty('SLURM_JOB_ID'));
+cfg.env.is_slurm      = ~isempty(getenv('SLURM_JOB_ID'));
+cfg.env.slurm_job_id  = string(getenv_or_empty('SLURM_JOB_ID'));
 cfg.env.slurm_cluster = string(getenv_or_empty('SLURM_CLUSTER_NAME'));
 
 % PC only interactive clean start (safe: does nothing on HPC / batch)
@@ -70,12 +69,9 @@ end
 %  CONFIG: IO / PATHS
 % ========================================================================
 cfg.paths = struct();
-% Script root stays script-root (portable)
 
-% --- Select data layout profile (THIS is the only thing you change per setup)
-% "pc_now" | "pc_shared" | "hpc_hummel"
-% --- Default profile depends on env.mode; can be overridden by env var PROOF_PROFILE
-cfg.paths.profile = default_profile_for_mode(cfg.env.mode);
+% --- Default profile depends on env.mode / machine_kind; can be overridden
+cfg.paths.profile = default_profile_for_mode(cfg.env.mode, cfg.env.machine_kind);
 
 prof_env = string(getenv_or_empty('BASELINE_PROFILE'));
 if strlength(prof_env) > 0
@@ -84,21 +80,21 @@ end
 
 % Resolve RAW + DERIVATIVES roots by profile (unless overridden below)
 switch cfg.paths.profile
-
     case "pc_now"
-        cfg.paths.bids_root = fullfile('K:\Wilken_Arbeitsordner\Raw_data', DEFAULT_BIDS_FOLDER_NAME);
-        cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
+    cfg.paths.bids_root = fullfile('K:\Wilken_Arbeitsordner\Raw_data', DEFAULT_BIDS_FOLDER_NAME);
+    cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
 
-    case "pc_shared"
-        cfg.paths.bids_root = fullfile('Z:\pb\KLPSY1\KLPSY1-RTG\MATRICS\raw');
-        cfg.paths.out_root  = fullfile('Z:\pb\KLPSY1\KLPSY1-RTG\MATRICS\derivatives/preprocessed_eeg_baseline');
+case "pc_shared"
+    cfg.paths.bids_root = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\sourcedata');
+    cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
 
-    case "hpc_hummel"
-        cfg.paths.bids_root = fullfile('/beegfs/u/bbf7366/raw', DEFAULT_BIDS_FOLDER_NAME);
-        cfg.paths.out_root  = fullfile('/beegfs/u/bbf7366/derivatives/preprocessed_eeg/preprocessed_eeg_baseline');
+case "server_windows"
+    cfg.paths.bids_root = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\sourcedata');
+    cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
 
-    otherwise
-        error('Unknown cfg.paths.profile="%s".', string(cfg.paths.profile));
+case "hpc_hummel"
+    cfg.paths.bids_root = fullfile('/beegfs/u/bbf7366/raw', DEFAULT_BIDS_FOLDER_NAME);
+    cfg.paths.out_root  = fullfile('/beegfs/u/bbf7366/derivatives/preprocessed_eeg/preprocessed_eeg_baseline');
 end
 
 % --- Absolute path overrides (highest priority)
@@ -111,15 +107,17 @@ if strlength(out_env) > 0
     cfg.paths.out_root = out_env;
 end
 
-
-% Toolbox locations (PC vs HPC)
+% Toolbox locations
 cfg.toolboxes = struct();
 
-cfg.toolboxes.path_eeglab_pc  = "K:\Wilken_Arbeitsordner\MATLAB\eeglab_current\eeglab2025.1.0";
-cfg.toolboxes.path_eeglab_hpc = "/beegfs/u/bbf7366/toolboxes/eeglab2025.1.0";
+% Same locations for local PC and Windows server/VDI unless you change them later
+cfg.toolboxes.path_eeglab_pc     = "K:\Wilken_Arbeitsordner\MATLAB\eeglab_current\eeglab2025.1.0";
+cfg.toolboxes.path_eeglab_server = "K:\Wilken_Arbeitsordner\MATLAB\eeglab_current\eeglab2025.1.0";
+cfg.toolboxes.path_eeglab_hpc    = "/beegfs/u/bbf7366/toolboxes/eeglab2025.1.0";
 
-cfg.toolboxes.path_faster_pc  = "K:\Wilken_Arbeitsordner\MATLAB\FASTER";
-cfg.toolboxes.path_faster_hpc = "/beegfs/u/bbf7366/toolboxes/FASTER";
+cfg.toolboxes.path_faster_pc     = "K:\Wilken_Arbeitsordner\MATLAB\FASTER";
+cfg.toolboxes.path_faster_server = "K:\Wilken_Arbeitsordner\MATLAB\FASTER";
+cfg.toolboxes.path_faster_hpc    = "/beegfs/u/bbf7366/toolboxes/FASTER";
 
 cfg.toolboxes.use_genpath = true;
 
@@ -128,7 +126,7 @@ cfg.toolboxes.eeglab = struct();
 cfg.toolboxes.eeglab.no_update_check_on_hpc = true;
 cfg.toolboxes.eeglab.nogui = true;
 
-% Logging stays relative to *script root*
+% Logging stays relative to script root
 cfg.paths.logs_dir = fullfile(cfg.root_dir, LOG_SUBDIR_RUNLOG);
 
 % Global overwrite behavior
@@ -140,8 +138,8 @@ cfg.io.dry_run = false;
 %  CONFIG: SUBJECT HANDLING
 % ========================================================================
 cfg.subjects = struct();
-cfg.subjects.list              = []; % empty = discover all from bids_root/sub-*
-cfg.subjects.min_id            = '143'; % if you want to run from one BIDS-formatted subject onwards, enter here lowest ID you want to analyze 
+cfg.subjects.list   = [];     % empty = discover all from bids_root/sub-*
+cfg.subjects.min_id = [];  % if you want to run from one BIDS-formatted subject onwards, enter here lowest ID you want to analyze
 
 %% ========================================================================
 %  CONFIG: PARALLELIZATION
@@ -164,15 +162,9 @@ cfg.steps.prep06_epoching   = struct('run', true, 'overwrite_mode', "");
 %% ========================================================================
 %  CONFIG: WHICH STEP-FUNCTION FAMILY TO USE
 % ========================================================================
-
-% One switch to select function naming scheme.
-% Examples:
-%   "aperiodic_eeg_b"  -> aperiodic_eeg_b_prep03_untilica, etc.
-%   "proof_eeg_cf"     -> proof_eeg_cf_prep03_untilica, etc.
 cfg.pipeline = struct();
-cfg.pipeline.step_prefix = "aperiodic_eeg_b";   % <----- THIS is your fix
+cfg.pipeline.step_prefix = "aperiodic_eeg_b";
 
-% Build function handles from prefix (robust, avoids copy/paste errors)
 cfg.step_fns = struct();
 cfg.step_fns.prep02_triggerfix = str2func(char(cfg.pipeline.step_prefix + "_prep02_triggerfix"));
 cfg.step_fns.prep03_untilica   = str2func(char(cfg.pipeline.step_prefix + "_prep03_untilica"));
@@ -185,29 +177,15 @@ cfg.step_fns.prep06_epoching   = str2func(char(cfg.pipeline.step_prefix + "_prep
 % ========================================================================
 cfg.prep02 = struct();
 
-% RAW order Quality Control (QC) vs behavior log (writes CSV when mismatch)
 cfg.prep02.run_raw_order_qc = true;
-
-% If multiple BIDS .vhdr exist for same subject/task:
-%   false -> enforce policy below
-%   true  -> loop over all vhdr files found
 cfg.prep02.allow_multiple_runs = false;
-
-% Policy when multiple .vhdr found and allow_multiple_runs=false:
-%   "most_recent" | "first" | "error"
 cfg.prep02.multiple_vhdr_policy = "most_recent";
-
-% Optional QC output directory ("" -> use step output directory)
 cfg.prep02.qc_out_dir = "";
 
-% Extinction block sizes (used for trigger remapping)
 cfg.prep02.ext_n_first  = 11;
 cfg.prep02.ext_n_second = 10;
 
-% Disable (revert) first extinction trials per stream (CS-/CS+)
 cfg.prep02.disable_first_ext_trials = true;
-
-% Disable first acquisition trials (marks first CS-/CS+ as exclude tokens)
 cfg.prep02.disable_first_acq_trials = true;
 
 %% ========================================================================
@@ -215,51 +193,41 @@ cfg.prep02.disable_first_acq_trials = true;
 % ========================================================================
 cfg.prep03 = struct();
 
-% Crop to task window (by markers)
 cfg.prep03.crop_to_task_markers = false;
 cfg.prep03.crop_start_marker    = 'S 91';
 cfg.prep03.crop_end_marker      = 'S 97';
-cfg.prep03.crop_padding_sec     = [0 0];   % [pre post] seconds
+cfg.prep03.crop_padding_sec     = [0 0];
 
-% Channel typing labels (used to set EEG/EOG/AUX types)
 cfg.prep03.eog_channel_labels     = {'IO1','IO2','LO1','LO2'};
 cfg.prep03.scr_channel_labels     = {'SCR'};
 cfg.prep03.startle_channel_labels = {'Startle'};
 cfg.prep03.ekg_channel_labels     = {'EKG'};
 
-% Downsample: 0 (none) | 250 | 500
 cfg.prep03.downsample_hz = 250;
 
-% Filters (applied to EEG+EOG only)
 cfg.prep03.highpass_hz          = 0.1;
 cfg.prep03.lowpass_hz           = 100;
 cfg.prep03.ica_prep_highpass_hz = 1;
 
-% Bad channel detection: "auto" (clean_rawdata) | "auto_rejchan" (pop_rejchan) | "off"
 cfg.prep03.detect_bad_channels_mode = "auto";
 cfg.prep03.auto_badchan_z_threshold  = 2.5;
 cfg.prep03.auto_badchan_freqrange_hz = [1, cfg.prep03.lowpass_hz + 10];
 
-% clean_rawdata-style parameters
 cfg.prep03.emu_flatline_sec           = 5;
 cfg.prep03.emu_channel_corr_threshold = 0.80;
 
-% Flat/invalid channel flagging
 cfg.prep03.flag_flat_channels_as_bad     = true;
-cfg.prep03.flat_channel_variance_epsilon = 0;   % 0 = exactly flat or invalid
+cfg.prep03.flat_channel_variance_epsilon = 0;
 
-% Interpolation
 cfg.prep03.interpolate_bad_channels_before_ica = true;
 cfg.prep03.interp_method = 'spherical';
 
-% Line noise
-cfg.prep03.line_noise_method          = "pop_cleanline"; % "pop_cleanline" | "off"
+cfg.prep03.line_noise_method          = "pop_cleanline";
 cfg.prep03.line_noise_frequencies_hz  = [50 100];
 cfg.prep03.pop_cleanline_bandwidth_hz = 2;
 cfg.prep03.pop_cleanline_p_value      = 0.01;
 cfg.prep03.pop_cleanline_verbose      = false;
 
-% ICA-prep epochs + rejection (FORICA dataset only)
 cfg.prep03.ica_prep_use_regepochs           = true;
 cfg.prep03.ica_prep_regepoch_length_sec     = 1;
 
@@ -270,29 +238,28 @@ cfg.prep03.ica_prep_mad_use_logvar          = true;
 cfg.prep03.ica_prep_use_jointprob_rejection = true;
 cfg.prep03.ica_prep_jointprob_local         = 2;
 cfg.prep03.ica_prep_jointprob_global        = 2;
-% Referencing
+
 cfg.prep03.apply_average_reference     = true;
 cfg.prep03.average_ref_exclude_non_eeg = true;
 
-% ===== SHARED EPOCH REJECTION (used for ICA and final if enabled) =====
-cfg.prep03.shared_epoch_rejection.enable        = true;
-cfg.prep03.shared_epoch_rejection.use_faster    = true;
-cfg.prep03.shared_epoch_rejection.faster_z      = 4;      % more lenient for ICA
-cfg.prep03.shared_epoch_rejection.use_robust_z  = true;
-cfg.prep03.shared_epoch_rejection.use_ptp       = true;
-cfg.prep03.shared_epoch_rejection.ptp_uV_thresh = 800;    % more lenient for ICA
-cfg.prep03.shared_epoch_rejection.max_reject_prop = 0.50; % allow higher rejection before exclusion
+cfg.prep03.shared_epoch_rejection.enable          = true;
+cfg.prep03.shared_epoch_rejection.use_faster      = true;
+cfg.prep03.shared_epoch_rejection.faster_z        = 4;
+cfg.prep03.shared_epoch_rejection.use_robust_z    = true;
+cfg.prep03.shared_epoch_rejection.use_ptp         = true;
+cfg.prep03.shared_epoch_rejection.ptp_uV_thresh   = 800;
+cfg.prep03.shared_epoch_rejection.max_reject_prop = 0.50;
 
 %% ========================================================================
 %  CONFIG: STEP 04 (ICA)
 % ========================================================================
 cfg.prep04 = struct();
-cfg.prep04.ica_method = "runica";          % "runica" | "amica"
+cfg.prep04.ica_method = "runica";
 cfg.prep04.use_extended_infomax = true;
 cfg.prep04.interrupt_ica        = 'off';
 cfg.prep04.use_pca_rank_if_interpolated = true;
 cfg.prep04.amica_require_no_spaces_on_windows = true;
-cfg.paths.branch_by_ica_method = true;   
+cfg.paths.branch_by_ica_method = true;
 
 %% ========================================================================
 %  CONFIG: STEP 05 (ICLabel rejection until epoching)
@@ -301,7 +268,6 @@ cfg.prep05 = struct();
 
 cfg.prep05.clear_subject_ica_comps_dir = true;
 
-% thresholds for rejection of components
 cfg.prep05.iclabel_eye_remove_thr       = 0.80;
 cfg.prep05.iclabel_muscle_remove_thr    = 0.80;
 cfg.prep05.iclabel_heart_remove_thr     = 0.80;
@@ -311,10 +277,9 @@ cfg.prep05.iclabel_channoise_remove_thr = 0.80;
 cfg.prep05.iclabel_other_remove_thr     = 0.95;
 cfg.prep05.iclabel_brain_min_keep_thr   = 0.05;
 
-cfg.prep05.save_ic_topos_png    = true; %for manual checking
-cfg.prep05.iclabel_edge_margin = 0.10; % which components to plot as edge cases
+cfg.prep05.save_ic_topos_png    = true;
+cfg.prep05.iclabel_edge_margin  = 0.10;
 
-% cpomponent png specs
 cfg.prep05.ic_topo_dpi        = 300;
 cfg.prep05.ic_topo_fig_cm     = [0 0 18 18];
 cfg.prep05.ic_topo_electrodes = 'off';
@@ -324,48 +289,46 @@ cfg.prep05.ic_topo_electrodes = 'off';
 % ========================================================================
 cfg.prep06 = struct();
 
-cfg.prep06.save_final_only         = true;   % default: single final output. each step produces one file. 
-cfg.prep06.save_intermediate_steps = false;  % only used if save_final_only=false. save one file after each preprocessing operation. can quickly fill up your disk space
-cfg.prep06.savemode                = 'twofiles';  % 'twofiles' | 'onefile'
+cfg.prep06.save_final_only         = true;
+cfg.prep06.save_intermediate_steps = false;
+cfg.prep06.savemode                = 'twofiles';
 
-cfg.prep06.reference_mode = "avg";           % "avg" | "mastoid"
+cfg.prep06.reference_mode = "avg";
 
 cfg.prep06.do_artifact_rejection = true;
 cfg.prep06.faster_z_thresh       = 3;
 cfg.prep06.faster_use_robust_z   = true;
-cfg.prep06.faster_warn_if_reject_prop_gt = 0.25; %warns if a subject has so many epochs rejected that they will be excluded
-cfg.prep06.max_reject_prop = 0.25;   % exclude subject if % epochs rejected
+cfg.prep06.faster_warn_if_reject_prop_gt = 0.25;
+cfg.prep06.max_reject_prop = 0.25;
 
-% epoch rejection specs
 cfg.prep06.faster_use_amplitude         = true;
 cfg.prep06.faster_use_variance          = true;
 cfg.prep06.faster_use_channel_deviation = true;
 
-cfg.prep06.ptp_uV_thresh = 600; % peak-to-peak threshold
+cfg.prep06.ptp_uV_thresh = 600;
 cfg.prep06.use_ptp = true;
-cfg.prep06.use_faster = true;   % if you want it
+cfg.prep06.use_faster = true;
 
 cfg.prep06.epoching_mode = "regular";
 cfg.prep06.regepoch_length_sec = 10;
-cfg.prep06.regepoch_step_sec   = 5; % if this is shorter than the length this will lead to overlapping epochs
+cfg.prep06.regepoch_step_sec   = 5;
 
 cfg.prep06.epoch_start_s   = -0.4;
 cfg.prep06.epoch_end_s     =  2.6;
-% Baseline correction
-cfg.prep06.do_baseline_correction = false;   % 
-cfg.prep06.base_start_ms          = -200;   
-cfg.prep06.base_end_ms            = 0;      % default 0ms
+
+cfg.prep06.do_baseline_correction = false;
+cfg.prep06.base_start_ms          = -200;
+cfg.prep06.base_end_ms            = 0;
 
 cfg.prep06.split_non_eeg_channels = true;
-cfg.prep06.eeg_only_keep_eog      = false;   % set true if you want HEOG/VEOG kept with EEG
+cfg.prep06.eeg_only_keep_eog      = false;
 
-% ===== SHARED EPOCH REJECTION (FINAL STRICT VERSION) =====
-cfg.prep06.shared_epoch_rejection.enable        = true;
-cfg.prep06.shared_epoch_rejection.use_faster    = true;
-cfg.prep06.shared_epoch_rejection.faster_z      = 2;
-cfg.prep06.shared_epoch_rejection.use_robust_z  = false;
-cfg.prep06.shared_epoch_rejection.use_ptp       = true;
-cfg.prep06.shared_epoch_rejection.ptp_uV_thresh = 300;
+cfg.prep06.shared_epoch_rejection.enable          = true;
+cfg.prep06.shared_epoch_rejection.use_faster      = true;
+cfg.prep06.shared_epoch_rejection.faster_z        = 2;
+cfg.prep06.shared_epoch_rejection.use_robust_z    = false;
+cfg.prep06.shared_epoch_rejection.use_ptp         = true;
+cfg.prep06.shared_epoch_rejection.ptp_uV_thresh   = 300;
 cfg.prep06.shared_epoch_rejection.max_reject_prop = 0.30;
 
 cfg.prep06.events_phase = { ...
@@ -377,7 +340,7 @@ cfg.prep06.events_phase = { ...
 };
 
 %% ========================================================================
-%  OPTIONAL: PARSE INPUTS (e.g., run_eeg_pipeline('001','002') or cellstr)
+%  OPTIONAL: PARSE INPUTS
 % ========================================================================
 cfg = parse_inputs(cfg, varargin{:});
 
@@ -394,6 +357,8 @@ helpers = build_helpers(master_log);
 helpers.logmsg(master_log, '=== PIPELINE START %s ===', datestr(now));
 helpers.logmsg(master_log, 'root_dir  : %s', cfg.root_dir);
 helpers.logmsg(master_log, 'env.mode  : %s', string(cfg.env.mode));
+helpers.logmsg(master_log, 'machine_kind : %s', string(cfg.env.machine_kind));
+helpers.logmsg(master_log, 'hostname  : %s', string(cfg.env.hostname));
 helpers.logmsg(master_log, 'env.is_slurm: %d | SLURM_JOB_ID=%s | SLURM_CLUSTER_NAME=%s', ...
     cfg.env.is_slurm, cfg.env.slurm_job_id, cfg.env.slurm_cluster);
 helpers.logmsg(master_log, 'paths.profile: %s', string(cfg.paths.profile));
@@ -402,7 +367,7 @@ helpers.logmsg(master_log, 'out_root  : %s', cfg.paths.out_root);
 helpers.logmsg(master_log, 'overwrite : %s', string(cfg.io.overwrite_mode));
 helpers.logmsg(master_log, 'dry_run   : %d', cfg.io.dry_run);
 
-helpers.logmsg(master_log, 'Step05: eye=%.2f mus=%.2f heart=%.2f line=%.2f ch=%.2f other=%.2f brain_min=%.2f edge=%.2f',...
+helpers.logmsg(master_log, 'Step05: eye=%.2f mus=%.2f heart=%.2f line=%.2f ch=%.2f other=%.2f brain_min=%.2f edge=%.2f', ...
     cfg.prep05.iclabel_eye_remove_thr, cfg.prep05.iclabel_muscle_remove_thr, cfg.prep05.iclabel_heart_remove_thr, ...
     cfg.prep05.iclabel_linenoise_remove_thr, cfg.prep05.iclabel_channoise_remove_thr, ...
     cfg.prep05.iclabel_other_remove_thr, cfg.prep05.iclabel_brain_min_keep_thr, cfg.prep05.iclabel_edge_margin);
@@ -430,7 +395,6 @@ use_parallel = resolve_parallel_enable(cfg);
 
 if use_parallel
 
-    % ---- HPC safety: avoid corrupt MATLAB prefs on shared home ------------
     if isempty(getenv('MATLAB_PREFDIR'))
         setenv('MATLAB_PREFDIR', fullfile(tempdir, 'matlab_prefs'));
         if ~exist(getenv('MATLAB_PREFDIR'),'dir'); mkdir(getenv('MATLAB_PREFDIR')); end
@@ -439,16 +403,13 @@ if use_parallel
     n_workers = resolve_worker_count(cfg, helpers, master_log);
     helpers.logmsg(master_log, 'Parallel requested (%d workers).', n_workers);
 
-    % Try to start pool; if toolbox license is exhausted, fall back to serial
     try
         pool_obj = gcp('nocreate');
         if isempty(pool_obj)
-            % NOTE: depending on MATLAB config, 'local' can become ThreadPool.
             parpool('local', n_workers);
             pool_obj = gcp('nocreate');
         end
 
-        % ---- detect pool type (ThreadPool vs process pool) ----------------
         cfg.parallel.pool_is_thread = false;
         cfg.parallel.pool_type = "none";
 
@@ -460,12 +421,9 @@ if use_parallel
         helpers.logmsg(master_log, 'Parallel pool type: %s | thread_based=%d', ...
             cfg.parallel.pool_type, cfg.parallel.pool_is_thread);
 
-        % ---- IMPORTANT: if thread pool, do ALL init on master (client) ----
         if cfg.parallel.pool_is_thread
             helpers.logmsg(master_log, 'Thread pool detected -> initializing EEGLAB in master (workers cannot addpath).');
 
-            % You already did init_toolboxes(cfg) above (master).
-            % Ensure EEGLAB is initialized once here:
             if cfg.toolboxes.eeglab.nogui
                 if cfg.env.mode == "hpc" && cfg.toolboxes.eeglab.no_update_check_on_hpc
                     try
@@ -484,7 +442,6 @@ if use_parallel
         end
 
     catch me
-        % If pool creation fails (license full / cluster issues), flip to serial.
         if is_parallel_license_error(me)
             helpers.logmsg(master_log, ...
                 'WARNING: Parallel toolbox license unavailable (max users reached). Falling back to SERIAL. (%s)', ...
@@ -495,7 +452,6 @@ if use_parallel
                 me.message);
         end
 
-        % ensure we don't think we have a pool
         try
             p = gcp('nocreate');
             if ~isempty(p)
@@ -516,12 +472,9 @@ else
     cfg.parallel.pool_type = "none";
 end
 
-
 %% ========================================================================
-%  RUN PIPELINE (status collection)
+%  RUN PIPELINE
 % ========================================================================
-
-% decide: AMICA forces serial subject loop (parfor workers cannot call system/unix)
 force_serial_due_to_amica = ...
     use_parallel && ...
     (cfg.env.mode == "hpc") && ...
@@ -532,17 +485,10 @@ if force_serial_due_to_amica
     helpers.logmsg(master_log, 'HPC+parfor+AMICA -> forcing serial subject loop (unix/system blocked on workers).');
     use_parallel = false;
 end
-% NOTE: HOPE THERE WILL BE A FIX FOR THIS SOON!
-
-if force_serial_due_to_amica && use_parallel
-    helpers.logmsg(master_log, 'AMICA selected -> disabling subject-level parfor (system/unix blocked on workers).');
-    use_parallel = false;
-end
 
 n_sub = numel(sub_ids);
 status = repmat(struct('subj','', 'ok',false, 'message','', 'logfile',''), n_sub, 1);
 
-% executing pipeline
 if use_parallel
     parfor i = 1:n_sub
         subj_id = sub_ids{i};
@@ -554,7 +500,6 @@ else
         status(i) = run_one_subject(subj_id, cfg);
     end
 end
-
 
 %% ========================================================================
 %  SUMMARY
@@ -575,7 +520,7 @@ if n_fail > 0
     error('Pipeline finished with failures (%d/%d). See logs.', n_fail, n_sub);
 end
 
-end % run_eeg_pipeline
+end % run_eeg_pipeline_baseline
 
 %% ========================================================================
 %  SUBJECT RUNNER (parfor-safe: self-contained)
@@ -595,21 +540,11 @@ helpers = build_helpers(sub_log);
 try
     helpers.logmsg(sub_log, '--- START sub-%s ---', subj_id);
 
-    % ==========================================================
-    % Toolboxes + EEGLAB per worker
-    %
-    % CRITICAL FIX:
-    % Thread-based workers cannot modify MATLAB path (addpath/matlabpath).
-    % Therefore:
-    %   - If ThreadPool: init must happen on the client BEFORE parfor
-    %   - If process pool / serial: OK to init here
-    % ==========================================================
     is_thread_pool = isfield(cfg,'parallel') && isfield(cfg.parallel,'pool_is_thread') && cfg.parallel.pool_is_thread;
 
     if is_thread_pool
         helpers.logmsg(sub_log, 'Thread pool -> skipping init_toolboxes + eeglab init inside worker (done in master).');
     else
-        % Toolboxes + EEGLAB per worker
         init_toolboxes(cfg);
 
         if cfg.toolboxes.eeglab.nogui
@@ -631,6 +566,9 @@ try
 
     % Build per-subject paths
     paths = build_paths(cfg, subj_id);
+
+    helpers.logmsg(sub_log, 'BIDS context: session=%s | bids_ses_dir=%s', ...
+        string(paths.session_label), string(paths.bids_ses_dir));
 
     % ===== Pipeline steps =====
 
@@ -684,7 +622,6 @@ catch me
     helpers.logmsg(sub_log, 'ERROR: %s', me.message);
     helpers.logmsg(sub_log, '%s', getReport(me,'extended','hyperlinks','off'));
 
-    % Rename subject log to include ERR suffix
     try
         [p, f, e] = fileparts(sub_log);
         err_log = fullfile(p, sprintf('%s_ERR%s', f, e));
@@ -696,7 +633,6 @@ catch me
     end
 end
 end
-
 
 %% ========================================================================
 %  PATH BUILDERS
@@ -710,15 +646,22 @@ paths.out_root  = cfg.paths.out_root;
 
 paths.subj_label = sprintf('sub-%s', subj_id);
 
+session_label = "01";
+if isfield(cfg,'bids') && isfield(cfg.bids,'session_label') && strlength(string(cfg.bids.session_label)) > 0
+    session_label = string(cfg.bids.session_label);
+end
+
+paths.session_label = session_label;
+
 % Common BIDS locations
 paths.bids_sub_dir = fullfile(paths.bids_root, paths.subj_label);
-paths.bids_ses_dir = fullfile(paths.bids_sub_dir, 'ses-01');
+paths.bids_ses_dir = fullfile(paths.bids_sub_dir, "ses-" + session_label);
 
 % ---------- STEP ROOTS (top-level per step) ----------
 paths.step02_root = fullfile(paths.out_root, '01_trigger_fix');
 paths.step03_untilica_root = fullfile(paths.out_root, '02_until_ica');
 paths.step03_forica_root   = fullfile(paths.out_root, '03_for_ica');
-% branch depending on ICA type for 4 - 6
+
 ica_tag = "runica";
 if isfield(cfg,'prep04') && isfield(cfg.prep04,'ica_method')
     ica_tag = string(cfg.prep04.ica_method);
@@ -726,13 +669,12 @@ end
 
 suffix = "";
 if isfield(cfg.paths,'branch_by_ica_method') && cfg.paths.branch_by_ica_method
-    suffix = "_" + ica_tag;  % -> "_runica" or "_amica"
+    suffix = "_" + ica_tag;
 end
 
 paths.step04_root = fullfile(paths.out_root, "04_after_ica"      + suffix);
 paths.step05_root = fullfile(paths.out_root, "05_until_epoching" + suffix);
 paths.step06_root = fullfile(paths.out_root, "06_epoched"        + suffix);
-
 
 ensure_dir(paths.step02_root);
 ensure_dir(paths.step03_untilica_root);
@@ -788,7 +730,6 @@ end
 % ========================================================================
 function sub_ids = discover_subjects(cfg, helpers, master_log)
 
-% 1) start from explicit list or discover from BIDS
 sub_ids = {};
 if isfield(cfg,'subjects') && isfield(cfg.subjects,'list') && ~isempty(cfg.subjects.list)
     sub_ids = cfg.subjects.list;
@@ -799,13 +740,11 @@ else
     sub_ids = cellfun(@(x) erase(x,'sub-'), sub_ids, 'uni', false);
 end
 
-% 2) normalize to cellstr of char (handles string arrays etc.)
 if isstring(sub_ids); sub_ids = cellstr(sub_ids); end
 if ischar(sub_ids);   sub_ids = {sub_ids};        end
 sub_ids = sub_ids(:);
 
-% 3) keep only valid 3-digit IDs
-rx = cfg.constants.valid_sub_id_regex;   % '^\d{3}$'
+rx = cfg.constants.valid_sub_id_regex;
 keep = ~cellfun(@isempty, regexp(sub_ids, rx, 'once'));
 sub_ids = sub_ids(keep);
 
@@ -813,19 +752,16 @@ if isempty(sub_ids)
     error('No valid subject IDs found in %s (after regex filter).', cfg.paths.bids_root);
 end
 
-% 4) numeric sort (safe)
 sub_num = cellfun(@str2double, sub_ids);
 [~, ix] = sort(sub_num);
 sub_ids = sub_ids(ix);
 
-% 5) OPTIONAL min_id filter — only if it is present AND valid numeric
 use_min = false;
 min_id_num = NaN;
 
 if isfield(cfg,'subjects') && isfield(cfg.subjects,'min_id')
     min_id_raw = cfg.subjects.min_id;
 
-    % treat [] / "" / '' as "feature off"
     if ~(isempty(min_id_raw) || (isstring(min_id_raw) && strlength(min_id_raw)==0) || (ischar(min_id_raw) && isempty(strtrim(min_id_raw))))
         min_id_num = str2double(string(min_id_raw));
         use_min = ~isnan(min_id_num) && isfinite(min_id_num);
@@ -845,6 +781,7 @@ if isempty(sub_ids)
 end
 
 end
+
 %% ========================================================================
 %  PARALLEL POLICY
 % ========================================================================
@@ -862,7 +799,6 @@ else
 end
 end
 
-
 function n_workers = resolve_worker_count(cfg, helpers, master_log)
 
 % 1) explicit cfg override
@@ -872,7 +808,7 @@ if ~isempty(cfg.parallel.force_workers)
     return;
 end
 
-% 2) env override (recommended on hummel without slurm)
+% 2) env override
 v = getenv('PROOF_WORKERS');
 if ~isempty(v)
     tmp = str2double(v);
@@ -883,13 +819,69 @@ if ~isempty(v)
     end
 end
 
-% 3) fallback: MATLAB-reported cores
-n_workers = feature('numcores');
-n_workers = max(1, n_workers);
-
-helpers.logmsg(master_log, 'Resolved worker count from feature(numcores)=%d', n_workers);
+% 3) automatic by machine kind/profile
+machine_kind = "";
+if isfield(cfg,'env') && isfield(cfg.env,'machine_kind')
+    machine_kind = string(cfg.env.machine_kind);
 end
 
+profile = "";
+if isfield(cfg,'paths') && isfield(cfg.paths,'profile')
+    profile = string(cfg.paths.profile);
+end
+
+switch machine_kind
+    case "server_windows"
+        n_workers = 4;
+
+    case "local_windows"
+        n_workers = 2;
+
+    case "hpc_hummel"
+        % keep Hummel logic unchanged
+        tmp = get_slurm_cpus_per_task();
+        if ~isempty(tmp)
+            n_workers = tmp;
+        else
+            n_workers = feature('numcores');
+        end
+
+    otherwise
+        switch profile
+            case "server_windows"
+                n_workers = 4;
+            case "pc_now"
+                n_workers = 2;
+            case "pc_shared"
+                n_workers = 2;
+            case "hpc_hummel"
+                tmp = get_slurm_cpus_per_task();
+                if ~isempty(tmp)
+                    n_workers = tmp;
+                else
+                    n_workers = feature('numcores');
+                end
+            otherwise
+                n_workers = min(2, feature('numcores'));
+        end
+end
+
+n_workers = max(1, round(n_workers));
+
+% clamp on Windows local/server to local cluster limit if possible
+if ~strcmp(machine_kind, "hpc_hummel")
+    try
+        cl = parcluster('local');
+        if ~isempty(cl.NumWorkers) && isnumeric(cl.NumWorkers)
+            n_workers = min(n_workers, cl.NumWorkers);
+        end
+    catch
+    end
+end
+
+helpers.logmsg(master_log, 'Resolved worker count=%d (machine_kind=%s, profile=%s)', ...
+    n_workers, machine_kind, profile);
+end
 
 %% ========================================================================
 %  HELPERS (INJECTED VIA HANDLES)
@@ -910,10 +902,10 @@ helpers.get_slurm_cpus_per_task = @get_slurm_cpus_per_task;
 helpers.resolve_overwrite_mode    = @resolve_overwrite_mode;
 helpers.step_should_run_outputs   = @step_should_run_outputs;
 helpers.safe_delete_set           = @safe_delete_set;
-helpers.safe_saveset = @safe_saveset;
-helpers.safe_loadset = @safe_loadset;
+helpers.safe_saveset              = @safe_saveset;
+helpers.safe_loadset              = @safe_loadset;
 
-% BIDS EEG fallback (for Step 03 if Step 02 is skipped)
+% BIDS EEG fallback
 helpers.find_bids_vhdr = @find_bids_vhdr;
 helpers.safe_loadbv    = @safe_loadbv;
 
@@ -921,7 +913,7 @@ helpers.safe_loadbv    = @safe_loadbv;
 helpers.append_eeg_comment = @append_eeg_comment;
 helpers.normalize_trigger_type = @normalize_trigger_type;
 
-% EEG utilities used by Step 03 (centralized)
+% EEG utilities used by Step 03
 helpers.find_first_event_latency               = @find_first_event_latency;
 helpers.ensure_channel_types                   = @ensure_channel_types;
 helpers.find_flat_or_invalid_channels          = @find_flat_or_invalid_channels;
@@ -995,117 +987,98 @@ end
 %  HELPER: overwrite resolution + output existence checks
 % ========================================================================
 function overwrite_mode = resolve_overwrite_mode(cfg, step_overwrite_mode)
-    overwrite_mode = string(cfg.io.overwrite_mode);
-    if nargin >= 2 && strlength(string(step_overwrite_mode)) > 0
-        overwrite_mode = string(step_overwrite_mode);
-    end
-    if overwrite_mode ~= "delete" && overwrite_mode ~= "skip"
-        overwrite_mode = "delete";
-    end
-    end
-    
-    function [do_run, reason, needs_regen] = step_should_run_outputs(out_files, overwrite_mode, cfg)
-    % STEP_SHOULD_RUN_OUTPUTS
-    % Accepts:
-    %   - cell array of file paths
-    %   - string scalar / char row path (single output)
-    % Returns:
-    %   do_run, reason, needs_regen (partial outputs)
-    
-    needs_regen = false;
-    
-    % ---- normalize input to cellstr of scalar char paths ----------------------
-    if nargin < 1 || isempty(out_files)
-        out_files = {};
-    end
-    
-    if ischar(out_files) || isstring(out_files)
-        out_files = {out_files};
-    end
-    
-    if ~iscell(out_files)
-        out_files = {out_files};
-    end
-    
-    exists_mask = false(size(out_files));
-    for k = 1:numel(out_files)
-        f = out_files{k};
-        if iscell(f); f = f{1}; end
-        f = char(string(f));           % normalize to char row
-        exists_mask(k) = exist(f, 'file') == 2;
-    end
-    
-    n_exist = sum(exists_mask);
-    
-    if n_exist == 0
-        do_run = true;
-        reason = "no outputs present";
-        return;
-    end
-    
-    if n_exist == numel(out_files)
-        if overwrite_mode == "skip"
-            do_run = false;
-            reason = "all outputs exist -> skip";
-            return;
-        else
-            do_run = true;
-            reason = "all outputs exist -> delete + regenerate";
-            return;
-        end
-    end
-    
-    needs_regen = true;
+overwrite_mode = string(cfg.io.overwrite_mode);
+if nargin >= 2 && strlength(string(step_overwrite_mode)) > 0
+    overwrite_mode = string(step_overwrite_mode);
+end
+if overwrite_mode ~= "delete" && overwrite_mode ~= "skip"
+    overwrite_mode = "delete";
+end
+end
+
+function [do_run, reason, needs_regen] = step_should_run_outputs(out_files, overwrite_mode, cfg)
+needs_regen = false;
+
+if nargin < 1 || isempty(out_files)
+    out_files = {};
+end
+
+if ischar(out_files) || isstring(out_files)
+    out_files = {out_files};
+end
+
+if ~iscell(out_files)
+    out_files = {out_files};
+end
+
+exists_mask = false(size(out_files));
+for k = 1:numel(out_files)
+    f = out_files{k};
+    if iscell(f); f = f{1}; end
+    f = char(string(f));
+    exists_mask(k) = exist(f, 'file') == 2;
+end
+
+n_exist = sum(exists_mask);
+
+if n_exist == 0
     do_run = true;
-    reason = sprintf('partial outputs exist (%d/%d) -> regenerate', n_exist, numel(out_files));
-    
-    if cfg.io.dry_run
-        % no-op
+    reason = "no outputs present";
+    return;
+end
+
+if n_exist == numel(out_files)
+    if overwrite_mode == "skip"
+        do_run = false;
+        reason = "all outputs exist -> skip";
+        return;
+    else
+        do_run = true;
+        reason = "all outputs exist -> delete + regenerate";
+        return;
     end
 end
 
+needs_regen = true;
+do_run = true;
+reason = sprintf('partial outputs exist (%d/%d) -> regenerate', n_exist, numel(out_files));
+
+if cfg.io.dry_run
+    % no-op
+end
+end
 
 function safe_delete_set(set_file)
-    % SAFE_DELETE_SET  Robust delete helper for .set/.fdt pairs.
-    % Accepts char, string scalar, string array, cellstr.
-    % Intentionally designed to be called via helpers.safe_delete_set (used by Step 02).
-    
-    % ---- normalize input to scalar char -------------------------------------
-    if nargin < 1
-        return;
-    end
-    
-    if iscell(set_file)
-        if isempty(set_file); return; end
-        set_file = set_file{1};
-    end
-    
-    % string(...) makes everything string; char(...) makes it a char row vector
-    set_file = char(string(set_file));
-    
-    if isempty(set_file)
-        return;
-    end
-    
-    % ---- derive pair paths ---------------------------------------------------
-    [p, f, ~] = fileparts(set_file);
-    
-    set_path = fullfile(p, [f '.set']);
-    fdt_path = fullfile(p, [f '.fdt']);
-    
-    % normalize again (paranoia against string arrays)
-    set_path = char(string(set_path));
-    fdt_path = char(string(fdt_path));
-    
-    % ---- delete if present ---------------------------------------------------
-    if exist(set_path, 'file') == 2
-        delete(set_path);
-    end
-    if exist(fdt_path, 'file') == 2
-        delete(fdt_path);
-    end
+if nargin < 1
+    return;
 end
 
+if iscell(set_file)
+    if isempty(set_file); return; end
+    set_file = set_file{1};
+end
+
+set_file = char(string(set_file));
+
+if isempty(set_file)
+    return;
+end
+
+[p, f, ~] = fileparts(set_file);
+
+set_path = fullfile(p, [f '.set']);
+fdt_path = fullfile(p, [f '.fdt']);
+
+set_path = char(string(set_path));
+fdt_path = char(string(fdt_path));
+
+if exist(set_path, 'file') == 2
+    delete(set_path);
+end
+if exist(fdt_path, 'file') == 2
+    delete(fdt_path);
+end
+end
 
 %% ========================================================================
 %  HELPER: EEG comment append
@@ -1149,7 +1122,7 @@ end
 end
 
 %% ========================================================================
-%  EEG UTIL HELPERS (centralized for Step 03+)
+%  EEG UTIL HELPERS
 % ========================================================================
 function latency = find_first_event_latency(EEG, event_type)
 latency = [];
@@ -1165,7 +1138,6 @@ for k = 1:numel(EEG.event)
     end
 end
 end
-
 
 function EEG = ensure_channel_types(EEG, step_cfg)
 
@@ -1761,61 +1733,54 @@ end
 %  TOOLBOX INIT
 % ========================================================================
 function init_toolboxes(cfg)
-    
-    addpath(cfg.root_dir);
-    
-    eeglab_root = resolve_toolbox_root(cfg, "eeglab");
-    faster_root = resolve_toolbox_root(cfg, "faster");
-    
-    % EEGLAB: only top folder
-    if strlength(eeglab_root) > 0
-        addpath(char(eeglab_root));
-    end
-    
-    % FASTER: genpath ok
-    if strlength(faster_root) > 0
-        if cfg.toolboxes.use_genpath
-            addpath(genpath(char(faster_root)));
-        else
-            addpath(char(faster_root));
-        end
-    end
-    
-    if exist('eeglab','file') ~= 2
-        error('EEGLAB not found. Expected eeglab.m under: %s', eeglab_root);
+
+addpath(cfg.root_dir);
+
+eeglab_root = resolve_toolbox_root(cfg, "eeglab");
+faster_root = resolve_toolbox_root(cfg, "faster");
+
+if strlength(eeglab_root) > 0
+    addpath(char(eeglab_root));
+end
+
+if strlength(faster_root) > 0
+    if cfg.toolboxes.use_genpath
+        addpath(genpath(char(faster_root)));
+    else
+        addpath(char(faster_root));
     end
 end
 
+if exist('eeglab','file') ~= 2
+    error('EEGLAB not found. Expected eeglab.m under: %s', eeglab_root);
+end
+end
+
 function root = resolve_toolbox_root(cfg, which)
-    
-    envname = upper(which) + "_ROOT";
-    root = string(getenv(envname));
-    if strlength(root) > 0
-        return;
-    end
-    
-    mode = string(cfg.env.mode);
-    switch mode
-        case "pc"
-            root = string(cfg.toolboxes.("path_" + which + "_pc"));
-        case "hpc"
-            root = string(cfg.toolboxes.("path_" + which + "_hpc"));
-        case "server"
-            % treat like pc unless you add server paths later
-            root = string(cfg.toolboxes.("path_" + which + "_pc"));
-        otherwise
-            root = "";
-    end
+
+envname = upper(which) + "_ROOT";
+root = string(getenv(envname));
+if strlength(root) > 0
+    return;
+end
+
+mode = string(cfg.env.mode);
+switch mode
+    case "pc"
+        root = string(cfg.toolboxes.("path_" + which + "_pc"));
+    case "server"
+        root = string(cfg.toolboxes.("path_" + which + "_server"));
+    case "hpc"
+        root = string(cfg.toolboxes.("path_" + which + "_hpc"));
+    otherwise
+        root = "";
+end
 end
 
 function mode = detect_env_mode()
 % Priority:
 %  1) explicit override via PROOF_ENV_MODE
-%  2) hostname looks like hummel -> hpc
-%  3) SLURM present -> hpc
-%  4) desktop available -> pc
-%  5) otherwise -> server
-
+%  2) machine kind detection
 v = string(getenv('PROOF_ENV_MODE'));
 v = lower(strtrim(v));
 if v == "pc" || v == "server" || v == "hpc"
@@ -1823,120 +1788,166 @@ if v == "pc" || v == "server" || v == "hpc"
     return;
 end
 
-% --- NEW: detect hummel by hostname (works even without slurm)
-hn = string(getenv('HOSTNAME'));
-hn = lower(strtrim(hn));
+machine_kind = detect_machine_kind();
+
+switch machine_kind
+    case "hpc_hummel"
+        mode = "hpc";
+    case "server_windows"
+        mode = "server";
+    otherwise
+        mode = "pc";
+end
+end
+
+function machine_kind = detect_machine_kind()
+
+machine_kind = "unknown";
+
+v = lower(strtrim(string(getenv('PROOF_MACHINE_KIND'))));
+if v == "local_windows" || v == "server_windows" || v == "hpc_hummel"
+    machine_kind = v;
+    return;
+end
+
+hn = lower(strtrim(get_hostname()));
+
 if strlength(hn) > 0 && contains(hn, "hummel")
-    mode = "hpc";
+    machine_kind = "hpc_hummel";
     return;
 end
 
-% keep SLURM detection as extra safety
 if ~isempty(getenv('SLURM_JOB_ID'))
-    mode = "hpc";
+    machine_kind = "hpc_hummel";
     return;
 end
 
-if usejava('desktop')
-    mode = "pc";
-else
-    mode = "server";
+if strlength(hn) > 0 && startsWith(hn, "vdi")
+    machine_kind = "server_windows";
+    return;
+end
+
+if ispc
+    machine_kind = "local_windows";
+    return;
 end
 end
 
+function hn = get_hostname()
+hn = "";
 
-function prof = default_profile_for_mode(mode)
-    mode = string(lower(strtrim(mode)));
-    switch mode
-        case "hpc"
-            prof = "hpc_hummel";
-        case "pc"
-            prof = "pc_now";
-        otherwise
-            prof = "pc_shared"; % or "pc_now" – choose what makes sense as your default "server"
+cands = ["COMPUTERNAME","HOSTNAME"];
+for i = 1:numel(cands)
+    tmp = getenv(char(cands(i)));
+    if ~isempty(tmp)
+        hn = string(tmp);
+        return;
     end
+end
+
+try
+    [status, out] = system('hostname');
+    if status == 0
+        hn = string(strtrim(out));
+    end
+catch
+end
+end
+
+function prof = default_profile_for_mode(mode, machine_kind)
+mode = string(lower(strtrim(mode)));
+machine_kind = string(lower(strtrim(machine_kind)));
+
+switch mode
+    case "hpc"
+        prof = "hpc_hummel";
+    case "server"
+        prof = "server_windows";
+    case "pc"
+        if machine_kind == "server_windows"
+            prof = "server_windows";
+        else
+            prof = "pc_shared";
+        end
+    otherwise
+        prof = "pc_shared";
+end
 end
 
 function EEG = safe_saveset(EEG, out_dir, out_fname, helpers, cfg)
-% SAFE_SAVESET  Robust wrapper around pop_saveset for HPC + MATLAB string issues.
+if nargin < 5 || isempty(cfg); cfg = struct(); end
+if ~isfield(cfg,'io') || ~isfield(cfg.io,'dry_run'); cfg.io.dry_run = false; end
 
-    if nargin < 5 || isempty(cfg); cfg = struct(); end
-    if ~isfield(cfg,'io') || ~isfield(cfg.io,'dry_run'); cfg.io.dry_run = false; end
+out_dir   = force_char_scalar(out_dir);
+out_fname = force_char_scalar(out_fname);
 
-    out_dir   = force_char_scalar(out_dir);
-    out_fname = force_char_scalar(out_fname);
+ensure_dir(out_dir);
 
-    ensure_dir(out_dir);
+EEG.filename = force_char_scalar(getfield_safe(EEG,'filename',''));
+EEG.filepath = force_char_scalar(getfield_safe(EEG,'filepath',''));
 
-    % Harden EEG fields that pop_saveset compares internally
-    EEG.filename = force_char_scalar(getfield_safe(EEG,'filename',''));
-    EEG.filepath = force_char_scalar(getfield_safe(EEG,'filepath',''));
+if contains(EEG.filename, filesep) || contains(EEG.filename, '/')
+    EEG.filename = '';
+end
 
-    % Some loaders store paths in filename; avoid that
-    if contains(EEG.filename, filesep) || contains(EEG.filename, '/')
-        EEG.filename = '';
-    end
+if cfg.io.dry_run
+    helpers.logmsg_default('DRY RUN: would pop_saveset to %s', fullfile(out_dir, out_fname));
+    return;
+end
 
-    if cfg.io.dry_run
-        helpers.logmsg_default('DRY RUN: would pop_saveset to %s', fullfile(out_dir, out_fname));
-        return;
-    end
-
-    EEG = pop_saveset(EEG, 'filename', out_fname, 'filepath', out_dir);
+EEG = pop_saveset(EEG, 'filename', out_fname, 'filepath', out_dir);
 end
 
 function out = force_char_scalar(x)
-    if isstring(x)
-        x = x(:);
-        if isempty(x); out = ''; else; out = char(x(1)); end
-        return;
-    end
-    if iscell(x)
-        if isempty(x); out = ''; else; out = force_char_scalar(x{1}); end
-        return;
-    end
-    if ischar(x)
-        if isempty(x); out = ''; else; out = x(1,:); end
-        return;
-    end
-    if isempty(x)
-        out = '';
-        return;
-    end
-    out = char(string(x(1)));
+if isstring(x)
+    x = x(:);
+    if isempty(x); out = ''; else; out = char(x(1)); end
+    return;
+end
+if iscell(x)
+    if isempty(x); out = ''; else; out = force_char_scalar(x{1}); end
+    return;
+end
+if ischar(x)
+    if isempty(x); out = ''; else; out = x(1,:); end
+    return;
+end
+if isempty(x)
+    out = '';
+    return;
+end
+out = char(string(x(1)));
 end
 
 function v = getfield_safe(S, field, default)
-    if isstruct(S) && isfield(S, field)
-        v = S.(field);
-    else
-        v = default;
-    end
+if isstruct(S) && isfield(S, field)
+    v = S.(field);
+else
+    v = default;
+end
 end
 
 function [vhdr_dir, vhdr_name] = find_bids_vhdr(paths, subj_id, helpers)
-% FIND_BIDS_VHDR  Find a BrainVision *.vhdr in standard BIDS locations.
-% Policy:
-%   - check a few plausible eeg/ directories
-%   - if multiple vhdr exist, pick most recent
+% FIND_BIDS_VHDR
+% Prefer task-matching BIDS vhdr in paths.bids_ses_dir/eeg.
+% If multiple candidates exist, pick most recent.
 
 vhdr_dir  = '';
 vhdr_name = '';
 
 cand_dirs = {};
 
-% preferred (mother build_paths sets these)
 if isfield(paths,'bids_ses_dir') && strlength(string(paths.bids_ses_dir)) > 0
     cand_dirs{end+1} = fullfile(char(string(paths.bids_ses_dir)), 'eeg');
 end
 
-% paranoid fallbacks
 if isfield(paths,'bids_sub_dir') && strlength(string(paths.bids_sub_dir)) > 0
-    cand_dirs{end+1} = fullfile(char(string(paths.bids_sub_dir)), 'ses-01', 'eeg');
+    if isfield(paths,'session_label') && strlength(string(paths.session_label)) > 0
+        cand_dirs{end+1} = fullfile(char(string(paths.bids_sub_dir)), ['ses-' char(string(paths.session_label))], 'eeg');
+    end
     cand_dirs{end+1} = fullfile(char(string(paths.bids_sub_dir)), 'eeg');
 end
 
-% de-dupe
 cand_dirs = unique(cand_dirs, 'stable');
 
 best = [];
@@ -1953,7 +1964,6 @@ for d = 1:numel(cand_dirs)
         continue;
     end
 
-    % pick most recent
     [~, ix] = max([cands.datenum]);
     best = cands(ix);
     best_dir = eeg_dir;
@@ -1976,9 +1986,7 @@ if nargin >= 3 && isfield(helpers,'logmsg_default')
 end
 end
 
-
 function EEG = safe_loadbv(vhdr_dir, vhdr_name, helpers)
-% SAFE_LOADBV  Robust wrapper around pop_loadbv (BrainVision loader)
 
 vhdr_dir  = force_char_scalar(vhdr_dir);
 vhdr_name = force_char_scalar(vhdr_name);
@@ -2004,36 +2012,29 @@ if nargin >= 3 && isstruct(helpers) && isfield(helpers,'logmsg_default')
 end
 end
 
-
-
 function EEG = safe_loadset(in_dir, in_fname, helpers)
-% SAFE_LOADSET  Robust wrapper around pop_loadset (fixes string/char issues).
 
-    in_dir   = force_char_scalar(in_dir);
-    in_fname = force_char_scalar(in_fname);
+in_dir   = force_char_scalar(in_dir);
+in_fname = force_char_scalar(in_fname);
 
-    if ~exist(in_dir, 'dir')
-        error('safe_loadset: input directory not found: %s', in_dir);
-    end
-
-    fullp = fullfile(in_dir, in_fname);
-    if exist(fullp, 'file') ~= 2
-        error('safe_loadset: file not found: %s', fullp);
-    end
-
-    EEG = pop_loadset('filename', in_fname, 'filepath', in_dir);
-    EEG = eeg_checkset(EEG);
-
-    if nargin >= 3 && isstruct(helpers) && isfield(helpers,'logmsg_default')
-        helpers.logmsg_default('Loaded set: %s', fullp);
-    end
+if ~exist(in_dir, 'dir')
+    error('safe_loadset: input directory not found: %s', in_dir);
 end
 
+fullp = fullfile(in_dir, in_fname);
+if exist(fullp, 'file') ~= 2
+    error('safe_loadset: file not found: %s', fullp);
+end
+
+EEG = pop_loadset('filename', in_fname, 'filepath', in_dir);
+EEG = eeg_checkset(EEG);
+
+if nargin >= 3 && isstruct(helpers) && isfield(helpers,'logmsg_default')
+    helpers.logmsg_default('Loaded set: %s', fullp);
+end
+end
 
 function tf = is_parallel_license_error(me)
-% Detect the common "max users reached" Parallel Computing Toolbox license error.
-% Works across some MATLAB variants where identifier/message differ.
-
 tf = false;
 
 try
@@ -2048,16 +2049,10 @@ catch
     id = "";
 end
 
-% Typical patterns:
-% - "License Manager Error -4"
-% - "Maximum number of users ... reached"
-% - feature name "Distrib_Computing_Toolbox"
-% - sometimes identifiers contain "license" or "checkout"
 tf = tf || contains(msg, "license manager error -4");
 tf = tf || contains(msg, "maximum number of users") && contains(msg, "toolbox");
 tf = tf || contains(msg, "distrib_computing_toolbox");
 tf = tf || contains(msg, "unable to check out a license") && contains(msg, "parallel");
-
 tf = tf || contains(id, "license") && contains(msg, "check out");
 end
 
@@ -2082,7 +2077,6 @@ bad_ptp    = false(EEG.trials,1);
 
 have_faster = (exist('epoch_properties','file') == 2);
 
-% ===== FASTER =====
 if reject_cfg.use_faster && have_faster
 
     props = epoch_properties(EEG, idxEEG);
@@ -2110,7 +2104,6 @@ if reject_cfg.use_faster && have_faster
     end
 end
 
-% ===== Peak-to-peak =====
 if reject_cfg.use_ptp
     data = double(EEG.data(idxEEG,:,:));
     ptp  = squeeze(max(data,[],2) - min(data,[],2));
@@ -2131,4 +2124,3 @@ info.n_rejected = numel(bad_epochs);
 info.rejected_epochs = bad_epochs;
 
 end
-

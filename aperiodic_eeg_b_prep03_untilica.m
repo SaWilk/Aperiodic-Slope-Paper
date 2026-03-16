@@ -101,9 +101,8 @@ step_cfg.average_ref_exclude_non_eeg  = true;   % only EEG channels define refer
 step_cfg.overwrite_mode = "";
 
 %% ========================================================================
-%  MERGE OVERRIDES FROM MOTHER CFG (your "2b")
+%  MERGE OVERRIDES FROM MOTHER CFG
 % ========================================================================
-% merge overrides from mother cfg.prep03
 if isfield(cfg, 'prep03') && isstruct(cfg.prep03)
     f = fieldnames(cfg.prep03);
     for k = 1:numel(f)
@@ -111,7 +110,6 @@ if isfield(cfg, 'prep03') && isstruct(cfg.prep03)
     end
 end
 
-% per-step overwrite override
 if isfield(cfg, 'steps') && isfield(cfg.steps, 'prep03_untilica')
     s = cfg.steps.prep03_untilica;
     if isfield(s,'overwrite_mode') && strlength(string(s.overwrite_mode)) > 0
@@ -243,65 +241,81 @@ EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: channel counts E
     numel(eeg_idx), numel(eog_idx), numel(aux_idx)));
 
 %% ========================================================================
-%  REMOVE DEAD / INVALID CHANNELS (GLOBAL: EEG + EOG + AUX)
-%  Rationale: constant or non-finite channels create NaNs in correlations and
-%  can destabilize later ICLabel/subcomp or QC metrics.
+%  FIND DEAD / INVALID CHANNELS, BUT ONLY REMOVE NON-EEG/AUX PERMANENTLY
+%  Rationale:
+%    - dead EEG channels should still exist for later interpolation
+%    - dead AUX channels can safely be removed permanently
 % ========================================================================
-
-dead_idx_all = [];
+dead_idx_all    = [];
 dead_labels_all = {};
 
+dead_eeg_idx    = [];
+dead_eeg_labels = {};
+
+dead_aux_idx    = [];
+dead_aux_labels = {};
+
 if step_cfg.flag_flat_channels_as_bad && string(step_cfg.detect_bad_channels_mode) ~= "off"
+
     all_idx = 1:EEG.nbchan;
 
-    % Reuse existing helper on ALL channels (not just EEG)
     [dead_idx_all, dead_labels_all] = helpers.find_flat_or_invalid_channels( ...
         EEG, all_idx, step_cfg.flat_channel_variance_epsilon);
 
     if ~isempty(dead_idx_all)
 
-        % Log what gets removed (include types)
-        dead_types = strings(size(dead_idx_all));
-        for ii = 1:numel(dead_idx_all)
-            try
-                dead_types(ii) = string(EEG.chanlocs(dead_idx_all(ii)).type);
-            catch
-                dead_types(ii) = "";
-            end
+        eeg_idx_now = find(strcmpi({EEG.chanlocs.type}, 'EEG'));
+        eog_idx_now = find(strcmpi({EEG.chanlocs.type}, 'EOG'));
+        aux_idx_now = find(~ismember(lower({EEG.chanlocs.type}), {'eeg','eog'}));
+
+        % Split dead channels by type
+        dead_eeg_idx = intersect(dead_idx_all, eeg_idx_now);
+        dead_aux_idx = intersect(dead_idx_all, aux_idx_now);
+
+        if ~isempty(dead_eeg_idx)
+            dead_eeg_labels = {EEG.chanlocs(dead_eeg_idx).labels};
+            helpers.logmsg_default( ...
+                'prep03_untilica: sub-%s | dead/invalid EEG channels flagged for later interpolation: %s', ...
+                subj_id, strjoin(string(dead_eeg_labels), ', '));
+
+            EEG = helpers.append_eeg_comment(EEG, sprintf( ...
+                'prep03_untilica: dead/invalid EEG flagged for interpolation: %s', ...
+                strjoin(dead_eeg_labels, ', ')));
         end
 
-        EEG = helpers.append_eeg_comment(EEG, sprintf( ...
-            'prep03_untilica: removing dead/invalid channels (global): %s', ...
-            strjoin(dead_labels_all, ', ')));
+        if ~isempty(dead_aux_idx)
+            dead_aux_labels = {EEG.chanlocs(dead_aux_idx).labels};
+            helpers.logmsg_default( ...
+                'prep03_untilica: sub-%s | removing dead/invalid AUX channels permanently: %s', ...
+                subj_id, strjoin(string(dead_aux_labels), ', '));
 
-        helpers.logmsg_default('prep03_untilica: %s | removing dead/invalid channels (global): %s', ...
-            sprintf('sub-%s', subj_id), strjoin(string(dead_labels_all), ', '));
+            EEG = helpers.append_eeg_comment(EEG, sprintf( ...
+                'prep03_untilica: removing dead/invalid AUX channels permanently: %s', ...
+                strjoin(dead_aux_labels, ', ')));
 
-        % Store bookkeeping
-        if ~isfield(EEG,'etc') || isempty(EEG.etc); EEG.etc = struct(); end
-        EEG.etc.dead_channels_removed = struct();
-        EEG.etc.dead_channels_removed.indices = dead_idx_all;
-        EEG.etc.dead_channels_removed.labels  = dead_labels_all;
-        EEG.etc.dead_channels_removed.types   = cellstr(dead_types);
-
-        % Actually remove them
-        EEG = pop_select(EEG, 'nochannel', dead_idx_all);
-        EEG = eeg_checkset(EEG);
-    else
-        if ~isfield(EEG,'etc') || isempty(EEG.etc); EEG.etc = struct(); end
-        EEG.etc.dead_channels_removed = struct('indices',[], 'labels',{{}}, 'types',{{}});
+            EEG = pop_select(EEG, 'nochannel', dead_aux_idx);
+            EEG = eeg_checkset(EEG);
+        end
     end
 end
 
-% Recompute indices after potential removal
+if ~isfield(EEG,'etc') || isempty(EEG.etc); EEG.etc = struct(); end
+EEG.etc.dead_channels_detected = struct();
+EEG.etc.dead_channels_detected.all_indices      = dead_idx_all;
+EEG.etc.dead_channels_detected.all_labels       = dead_labels_all;
+EEG.etc.dead_channels_detected.dead_eeg_idx     = dead_eeg_idx;
+EEG.etc.dead_channels_detected.dead_eeg_labels  = dead_eeg_labels;
+EEG.etc.dead_channels_detected.dead_aux_idx     = dead_aux_idx;
+EEG.etc.dead_channels_detected.dead_aux_labels  = dead_aux_labels;
+
+% Recompute indices after potential AUX removal
 eeg_idx = find(strcmpi({EEG.chanlocs.type}, 'EEG'));
 eog_idx = find(strcmpi({EEG.chanlocs.type}, 'EOG'));
 aux_idx = find(~ismember(lower({EEG.chanlocs.type}), {'eeg','eog'}));
 
 EEG = helpers.append_eeg_comment(EEG, sprintf( ...
-    'prep03_untilica: channel counts AFTER dead removal EEG=%d | EOG=%d | AUX=%d', ...
+    'prep03_untilica: channel counts AFTER dead-channel handling EEG=%d | EOG=%d | AUX=%d', ...
     numel(eeg_idx), numel(eog_idx), numel(aux_idx)));
-
 
 %% ========================================================================
 %  CROP TO TASK WINDOW (OPTIONAL)
@@ -385,18 +399,28 @@ switch string(step_cfg.detect_bad_channels_mode)
                 [emu_bad_idx, ~] = helpers.detect_bad_channels_emulation_style( ...
                     EEG, eeg_idx, step_cfg.emu_flatline_sec, step_cfg.emu_channel_corr_threshold);
 
-                bad_idx = sort(unique([emu_bad_idx(:)' flat_idx(:)']));
-                bad_idx = setdiff(bad_idx, eog_idx);
+                % IMPORTANT:
+                % include flat EEG channels AND dead EEG channels here
+                bad_idx = sort(unique([ ...
+                    emu_bad_idx(:)' ...
+                    flat_idx(:)' ...
+                    dead_eeg_idx(:)' ...
+                    ]));
+
+                bad_idx = intersect(bad_idx, eeg_idx); % EEG only
+                bad_idx = setdiff(bad_idx, eog_idx);   % safety
 
             catch me
-                helpers.logmsg_default('prep03_untilica: badchan auto FAILED -> fallback flat only. %s', me.message);
-                bad_idx = flat_idx;
+                helpers.logmsg_default('prep03_untilica: badchan auto FAILED -> fallback flat/dead EEG only. %s', me.message);
+
+                bad_idx = sort(unique([flat_idx(:)' dead_eeg_idx(:)']));
+                bad_idx = intersect(bad_idx, eeg_idx);
             end
         end
 
     case "auto_rejchan"
         if isempty(eeg_idx)
-            bad_idx = flat_idx;
+            bad_idx = sort(unique([flat_idx(:)' dead_eeg_idx(:)']));
         else
             try
                 [~, idx_prob] = pop_rejchan(EEG, 'elec', eeg_idx, 'threshold', step_cfg.auto_badchan_z_threshold, 'norm', 'on', 'measure', 'prob');
@@ -404,12 +428,22 @@ switch string(step_cfg.detect_bad_channels_mode)
                 [~, idx_spec] = pop_rejchan(EEG, 'elec', eeg_idx, 'threshold', step_cfg.auto_badchan_z_threshold, 'norm', 'on', 'measure', 'spec', ...
                     'freqrange', step_cfg.auto_badchan_freqrange_hz);
 
-                bad_idx = sort(unique([idx_prob idx_kurt idx_spec flat_idx]));
+                bad_idx = sort(unique([ ...
+                    idx_prob(:)' ...
+                    idx_kurt(:)' ...
+                    idx_spec(:)' ...
+                    flat_idx(:)' ...
+                    dead_eeg_idx(:)' ...
+                    ]));
+
+                bad_idx = intersect(bad_idx, eeg_idx);
                 bad_idx = setdiff(bad_idx, eog_idx);
 
             catch me
-                helpers.logmsg_default('prep03_untilica: badchan auto_rejchan FAILED -> fallback flat only. %s', me.message);
-                bad_idx = flat_idx;
+                helpers.logmsg_default('prep03_untilica: badchan auto_rejchan FAILED -> fallback flat/dead EEG only. %s', me.message);
+
+                bad_idx = sort(unique([flat_idx(:)' dead_eeg_idx(:)']));
+                bad_idx = intersect(bad_idx, eeg_idx);
             end
         end
 
@@ -422,7 +456,7 @@ end
 
 if ~isempty(bad_idx)
     bad_labels = {EEG.chanlocs(bad_idx).labels};
-    EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: bad EEG labels: %s', strjoin(bad_labels, ', ')));
+    EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: bad EEG labels (to interpolate): %s', strjoin(bad_labels, ', ')));
 else
     EEG = helpers.append_eeg_comment(EEG, 'prep03_untilica: no bad EEG channels flagged');
 end
@@ -442,6 +476,19 @@ if step_cfg.interpolate_bad_channels_before_ica && ~isempty(bad_idx)
 
     EEG = pop_interp(EEG, bad_idx, step_cfg.interp_method);
     EEG = eeg_checkset(EEG);
+
+    % refresh channel counts after interpolation
+    eeg_idx = find(strcmpi({EEG.chanlocs.type}, 'EEG'));
+    eog_idx = find(strcmpi({EEG.chanlocs.type}, 'EOG'));
+    aux_idx = find(~ismember(lower({EEG.chanlocs.type}), {'eeg','eog'}));
+
+    helpers.logmsg_default( ...
+        'prep03_untilica: AFTER interpolation channel counts EEG=%d | EOG=%d | AUX=%d', ...
+        numel(eeg_idx), numel(eog_idx), numel(aux_idx));
+
+    EEG = helpers.append_eeg_comment(EEG, sprintf( ...
+        'prep03_untilica: AFTER interpolation channel counts EEG=%d | EOG=%d | AUX=%d', ...
+        numel(eeg_idx), numel(eog_idx), numel(aux_idx)));
 
     if ~isfield(EEG,'etc') || isempty(EEG.etc); EEG.etc = struct(); end
     EEG.etc.interpolated_channel_indices = bad_idx;
@@ -488,7 +535,6 @@ else
     EEG.etc.average_reference_applied = false;
 end
 
-
 %% ========================================================================
 %  FILTERING + LINE NOISE (EEG+EOG ONLY)
 % ========================================================================
@@ -501,9 +547,12 @@ EEG = helpers.apply_filter_to_subset_only(EEG, filter_idx, step_cfg.highpass_hz,
 line_noise_applied = false;
 if string(step_cfg.line_noise_method) == "pop_cleanline"
     [EEG, line_noise_applied] = helpers.apply_pop_cleanline_to_subset(EEG, filter_idx, step_cfg);
+    if ~line_noise_applied
+        helpers.logmsg_default('prep03_untilica: WARNING pop_cleanline did not apply successfully.');
+    end
 end
-EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: line noise method=%s applied=%d', ...
-    string(step_cfg.line_noise_method), line_noise_applied));
+EEG = helpers.append_eeg_comment(EEG, sprintf('prep03_untilica: line noise method=%s applied=%d freqs=%s', ...
+    string(step_cfg.line_noise_method), line_noise_applied, mat2str(step_cfg.line_noise_frequencies_hz)));
 
 EEG = helpers.apply_filter_to_subset_only(EEG, filter_idx, [], step_cfg.lowpass_hz, 'prep03_untilica low-pass');
 
@@ -563,17 +612,15 @@ if step_cfg.ica_prep_use_jointprob_rejection
     ica_prep_eeg = helpers.append_eeg_comment(ica_prep_eeg, sprintf('prep03_untilica: ICA-prep jointprob applied=%d', did_jointprob));
 end
 
-if ~cfg.io.dry_run
-    ica_prep_eeg = helpers.safe_saveset(ica_prep_eeg, paths.prep03_out_dir_forica, sprintf('%s_forica.set', run_base_name), helpers, cfg);
-    % ======================================================================
-% SHARED EPOCH REJECTION FOR ICA (STRICT OR LENIENT VIA CONFIG)
-% ======================================================================
-
+%% ========================================================================
+%  SHARED EPOCH REJECTION FOR ICA (STRICT OR LENIENT VIA CONFIG)
+% ========================================================================
 if isfield(cfg,'prep03') && isfield(cfg.prep03,'shared_epoch_rejection')
 
     reject_cfg = cfg.prep03.shared_epoch_rejection;
 
-    if reject_cfg.enable && ica_prep_eeg.trials > 0
+    if isstruct(reject_cfg) && isfield(reject_cfg,'enable') && reject_cfg.enable ...
+            && isfield(ica_prep_eeg,'trials') && ica_prep_eeg.trials > 0
 
         [ica_prep_eeg, rej_info] = helpers.apply_shared_epoch_rejection( ...
             ica_prep_eeg, reject_cfg);
@@ -589,6 +636,11 @@ if isfield(cfg,'prep03') && isfield(cfg.prep03,'shared_epoch_rejection')
     end
 end
 
+%% ========================================================================
+%  SAVE FORICA
+% ========================================================================
+if ~cfg.io.dry_run
+    ica_prep_eeg = helpers.safe_saveset(ica_prep_eeg, paths.prep03_out_dir_forica, sprintf('%s_forica.set', run_base_name), helpers, cfg);
 end
 ica_prep_eeg = helpers.append_eeg_comment(ica_prep_eeg, sprintf('prep03_untilica: saved forica: %s', out_forica));
 helpers.logmsg_default('prep03_untilica: saved forica (dry_run=%d): %s', cfg.io.dry_run, out_forica);
