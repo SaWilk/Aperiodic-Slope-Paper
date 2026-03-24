@@ -10,7 +10,8 @@ function run_eeg_pipeline_baseline(varargin)
 %   - Global overwrite behavior:
 %       - cfg.io.overwrite_mode = "delete" (default): delete existing outputs for that step + regenerate
 %       - cfg.io.overwrite_mode = "skip": if output exists, skip step
-%       - Can be overridden per-step (cfg.steps.<step>.overwrite_mode)
+%       - cfg.io.overwrite_mode = "if_older_than": compare output-folder modification date to cutoff
+%       - Can be overridden per-step
 %
 % Step function signature:
 %   step_out = proof_eeg_cf_prepXX_step(subj_id, cfg, paths, helpers)
@@ -19,7 +20,7 @@ function run_eeg_pipeline_baseline(varargin)
 
 %% HOW TO USE
 %
-% Expects outputs form the 01_BIDS_formatting function
+% Expects outputs from the 01_BIDS_formatting function
 
 %% ========================================================================
 %  CONSTANTS
@@ -81,20 +82,20 @@ end
 % Resolve RAW + DERIVATIVES roots by profile (unless overridden below)
 switch cfg.paths.profile
     case "pc_now"
-    cfg.paths.bids_root = fullfile('K:\Wilken_Arbeitsordner\Raw_data', DEFAULT_BIDS_FOLDER_NAME);
-    cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
+        cfg.paths.bids_root = fullfile('K:\Wilken_Arbeitsordner\Raw_data', DEFAULT_BIDS_FOLDER_NAME);
+        cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
 
-case "pc_shared"
-    cfg.paths.bids_root = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\sourcedata');
-    cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
+    case "pc_shared"
+        cfg.paths.bids_root = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\sourcedata');
+        cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
 
-case "server_windows"
-    cfg.paths.bids_root = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\sourcedata');
-    cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
+    case "server_windows"
+        cfg.paths.bids_root = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\sourcedata');
+        cfg.paths.out_root  = fullfile('Z:\pb\KPP_KPN_joined\Aperiodic\Saskia\derivatives');
 
-case "hpc_hummel"
-    cfg.paths.bids_root = fullfile('/beegfs/u/bbf7366/raw', DEFAULT_BIDS_FOLDER_NAME);
-    cfg.paths.out_root  = fullfile('/beegfs/u/bbf7366/derivatives/preprocessed_eeg/preprocessed_eeg_baseline');
+    case "hpc_hummel"
+        cfg.paths.bids_root = fullfile('/beegfs/u/bbf7366/raw', DEFAULT_BIDS_FOLDER_NAME);
+        cfg.paths.out_root  = fullfile('/beegfs/u/bbf7366/derivatives/preprocessed_eeg/preprocessed_eeg_baseline');
 end
 
 % --- Absolute path overrides (highest priority)
@@ -110,7 +111,6 @@ end
 % Toolbox locations
 cfg.toolboxes = struct();
 
-% Same locations for local PC and Windows server/VDI unless you change them later
 cfg.toolboxes.path_eeglab_pc     = "K:\Wilken_Arbeitsordner\MATLAB\eeglab_current\eeglab2025.1.0";
 cfg.toolboxes.path_eeglab_server = "K:\Wilken_Arbeitsordner\MATLAB\eeglab_current\eeglab2025.1.0";
 cfg.toolboxes.path_eeglab_hpc    = "/beegfs/u/bbf7366/toolboxes/eeglab2025.1.0";
@@ -131,14 +131,15 @@ cfg.paths.logs_dir = fullfile(cfg.root_dir, LOG_SUBDIR_RUNLOG);
 
 % Global overwrite behavior
 cfg.io = struct();
-cfg.io.overwrite_mode = "delete";  % "delete" | "skip"
+cfg.io.overwrite_mode = "skip";      % "delete" | "skip" | "if_older_than"
+cfg.io.overwrite_if_older_than = ""; % e.g. "2026-03-15 12:00:00"
 cfg.io.dry_run = false;
 
 %% ========================================================================
 %  CONFIG: SUBJECT HANDLING
 % ========================================================================
 cfg.subjects = struct();
-cfg.subjects.list   = [];     % empty = discover all from bids_root/sub-*
+cfg.subjects.list   = [];  % empty = discover all from bids_root/sub-*
 cfg.subjects.min_id = [];  % if you want to run from one BIDS-formatted subject onwards, enter here lowest ID you want to analyze
 
 %% ========================================================================
@@ -153,11 +154,13 @@ cfg.parallel.force_workers = []; % set to integer to override SLURM/auto detecti
 % ========================================================================
 cfg.steps = struct();
 
-cfg.steps.prep02_triggerfix = struct('run', false, 'overwrite_mode', "");
-cfg.steps.prep03_untilica   = struct('run', true, 'overwrite_mode', "");
-cfg.steps.prep04_ica        = struct('run', true, 'overwrite_mode', "");
-cfg.steps.prep05_after_ica  = struct('run', true, 'overwrite_mode', "");
-cfg.steps.prep06_epoching   = struct('run', true, 'overwrite_mode', "");
+% overwrite mode: "delete" | "skip" | "if_older_than" (then also specify a
+% date in a format of your choice)
+cfg.steps.prep02_triggerfix = struct('run', false, 'overwrite_mode', "", 'overwrite_if_older_than', "");
+cfg.steps.prep03_untilica   = struct('run', true,  'overwrite_mode', "if_older_than", 'overwrite_if_older_than', "2026-03-15");
+cfg.steps.prep04_ica        = struct('run', true,  'overwrite_mode', "delete", 'overwrite_if_older_than', "");
+cfg.steps.prep05_after_ica  = struct('run', true,  'overwrite_mode', "delete", 'overwrite_if_older_than', "");
+cfg.steps.prep06_epoching   = struct('run', true,  'overwrite_mode', "delete", 'overwrite_if_older_than', "");
 
 %% ========================================================================
 %  CONFIG: WHICH STEP-FUNCTION FAMILY TO USE
@@ -254,7 +257,7 @@ cfg.prep03.shared_epoch_rejection.max_reject_prop = 0.50;
 %  CONFIG: STEP 04 (ICA)
 % ========================================================================
 cfg.prep04 = struct();
-cfg.prep04.ica_method = "runica";
+cfg.prep04.ica_method = "amica";
 cfg.prep04.use_extended_infomax = true;
 cfg.prep04.interrupt_ica        = 'off';
 cfg.prep04.use_pca_rank_if_interpolated = true;
@@ -365,6 +368,7 @@ helpers.logmsg(master_log, 'paths.profile: %s', string(cfg.paths.profile));
 helpers.logmsg(master_log, 'bids_root : %s', cfg.paths.bids_root);
 helpers.logmsg(master_log, 'out_root  : %s', cfg.paths.out_root);
 helpers.logmsg(master_log, 'overwrite : %s', string(cfg.io.overwrite_mode));
+helpers.logmsg(master_log, 'overwrite_if_older_than : %s', string(cfg.io.overwrite_if_older_than));
 helpers.logmsg(master_log, 'dry_run   : %d', cfg.io.dry_run);
 
 helpers.logmsg(master_log, 'Step05: eye=%.2f mus=%.2f heart=%.2f line=%.2f ch=%.2f other=%.2f brain_min=%.2f edge=%.2f', ...
@@ -473,7 +477,7 @@ else
 end
 
 %% ========================================================================
-%  RUN PIPELINE
+%  RUN POLICY SPECIAL CASE
 % ========================================================================
 force_serial_due_to_amica = ...
     use_parallel && ...
@@ -486,24 +490,58 @@ if force_serial_due_to_amica
     use_parallel = false;
 end
 
-n_sub = numel(sub_ids);
+%% ========================================================================
+%  PREPLAN SUBJECT WORK BEFORE LOOP
+% ========================================================================
+subject_plans = build_subject_plans(cfg, sub_ids, helpers, master_log);
+
+keep_mask = arrayfun(@(x) x.any_step_to_run, subject_plans);
+subject_plans = subject_plans(keep_mask);
+
+helpers.logmsg(master_log, 'Planning complete: %d/%d subject(s) require real work.', ...
+    numel(subject_plans), numel(sub_ids));
+
+% Optional: heavier subjects first to improve tail behavior
+if ~isempty(subject_plans)
+    weights = zeros(numel(subject_plans),1);
+    for i = 1:numel(subject_plans)
+        s = subject_plans(i).steps;
+        weights(i) = ...
+            100 * double(s.prep04_ica.run) + ...
+             20 * double(s.prep03_untilica.run) + ...
+             10 * double(s.prep05_after_ica.run) + ...
+              5 * double(s.prep06_epoching.run) + ...
+              1 * double(s.prep02_triggerfix.run);
+    end
+    [~, ix] = sort(weights, 'descend');
+    subject_plans = subject_plans(ix);
+end
+
+%% ========================================================================
+%  RUN PIPELINE
+% ========================================================================
+n_sub = numel(subject_plans);
 status = repmat(struct('subj','', 'ok',false, 'message','', 'logfile',''), n_sub, 1);
 
 if use_parallel
     parfor i = 1:n_sub
-        subj_id = sub_ids{i};
-        status(i) = run_one_subject(subj_id, cfg); %#ok<PFOUS>
+        status(i) = run_one_subject(subject_plans(i), cfg); %#ok<PFOUS>
     end
 else
     for i = 1:n_sub
-        subj_id = sub_ids{i};
-        status(i) = run_one_subject(subj_id, cfg);
+        status(i) = run_one_subject(subject_plans(i), cfg);
     end
 end
 
 %% ========================================================================
 %  SUMMARY
 % ========================================================================
+if isempty(status)
+    helpers.logmsg(master_log, '=== PIPELINE END %s ===', datestr(now));
+    helpers.logmsg(master_log, 'No subjects required work. Nothing to do.');
+    return;
+end
+
 ok_mask = [status.ok];
 n_ok = sum(ok_mask);
 n_fail = sum(~ok_mask);
@@ -525,7 +563,9 @@ end % run_eeg_pipeline_baseline
 %% ========================================================================
 %  SUBJECT RUNNER (parfor-safe: self-contained)
 % ========================================================================
-function out = run_one_subject(subj_id, cfg)
+function out = run_one_subject(subject_plan, cfg)
+
+subj_id = subject_plan.subj_id;
 
 out = struct('subj', subj_id, 'ok', false, 'message','', 'logfile','');
 
@@ -539,6 +579,7 @@ helpers = build_helpers(sub_log);
 
 try
     helpers.logmsg(sub_log, '--- START sub-%s ---', subj_id);
+    t_sub = tic;
 
     is_thread_pool = isfield(cfg,'parallel') && isfield(cfg.parallel,'pool_is_thread') && cfg.parallel.pool_is_thread;
 
@@ -572,46 +613,77 @@ try
 
     % ===== Pipeline steps =====
 
-    if cfg.steps.prep02_triggerfix.run
+    if subject_plan.steps.prep02_triggerfix.run
+        maybe_clear_step_folder(paths, 'prep02_triggerfix', subject_plan, helpers, cfg, sub_log);
         helpers.logmsg(sub_log, 'Step 02: triggerfix');
+        t_step = tic;
         step_out = feval(cfg.step_fns.prep02_triggerfix, subj_id, cfg, paths, helpers);
+        helpers.logmsg(sub_log, 'Step 02 runtime: %.2f min', toc(t_step)/60);
         if ~step_out.ok
             error('prep02_triggerfix failed for sub-%s: %s', subj_id, step_out.message);
         end
+    else
+        helpers.logmsg(sub_log, 'Step 02: triggerfix -> skipped by preplan (%s)', ...
+            subject_plan.steps.prep02_triggerfix.reason);
     end
 
-    if cfg.steps.prep03_untilica.run
+    if subject_plan.steps.prep03_untilica.run
+        maybe_clear_step_folder(paths, 'prep03_untilica', subject_plan, helpers, cfg, sub_log);
         helpers.logmsg(sub_log, 'Step 03: untilICA');
+        t_step = tic;
         step_out = feval(cfg.step_fns.prep03_untilica, subj_id, cfg, paths, helpers);
+        helpers.logmsg(sub_log, 'Step 03 runtime: %.2f min', toc(t_step)/60);
         if ~step_out.ok
             error('prep03_untilica failed for sub-%s: %s', subj_id, step_out.message);
         end
+    else
+        helpers.logmsg(sub_log, 'Step 03: untilICA -> skipped by preplan (%s)', ...
+            subject_plan.steps.prep03_untilica.reason);
     end
 
-    if cfg.steps.prep04_ica.run
+    if subject_plan.steps.prep04_ica.run
+        maybe_clear_step_folder(paths, 'prep04_ica', subject_plan, helpers, cfg, sub_log);
         helpers.logmsg(sub_log, 'Step 04: ICA');
+        t_step = tic;
         step_out = feval(cfg.step_fns.prep04_ica, subj_id, cfg, paths, helpers);
+        helpers.logmsg(sub_log, 'Step 04 runtime: %.2f min', toc(t_step)/60);
         if ~step_out.ok
             error('prep04_ica failed for sub-%s: %s', subj_id, step_out.message);
         end
+    else
+        helpers.logmsg(sub_log, 'Step 04: ICA -> skipped by preplan (%s)', ...
+            subject_plan.steps.prep04_ica.reason);
     end
 
-    if cfg.steps.prep05_after_ica.run
+    if subject_plan.steps.prep05_after_ica.run
+        maybe_clear_step_folder(paths, 'prep05_after_ica', subject_plan, helpers, cfg, sub_log);
         helpers.logmsg(sub_log, 'Step 05: IC rejection (ICLabel)');
+        t_step = tic;
         step_out = feval(cfg.step_fns.prep05_after_ica, subj_id, cfg, paths, helpers);
+        helpers.logmsg(sub_log, 'Step 05 runtime: %.2f min', toc(t_step)/60);
         if ~step_out.ok
             error('prep05_after_ica failed for sub-%s: %s', subj_id, step_out.message);
         end
+    else
+        helpers.logmsg(sub_log, 'Step 05: IC rejection (ICLabel) -> skipped by preplan (%s)', ...
+            subject_plan.steps.prep05_after_ica.reason);
     end
 
-    if cfg.steps.prep06_epoching.run
+    if subject_plan.steps.prep06_epoching.run
+        maybe_clear_step_folder(paths, 'prep06_epoching', subject_plan, helpers, cfg, sub_log);
         helpers.logmsg(sub_log, 'Step 06: epoching + final rejection');
+        t_step = tic;
         step_out = feval(cfg.step_fns.prep06_epoching, subj_id, cfg, paths, helpers);
+        helpers.logmsg(sub_log, 'Step 06 runtime: %.2f min', toc(t_step)/60);
         if ~step_out.ok
             error('prep06_epoching failed for sub-%s: %s', subj_id, step_out.message);
         end
+    else
+        helpers.logmsg(sub_log, 'Step 06: epoching + final rejection -> skipped by preplan (%s)', ...
+            subject_plan.steps.prep06_epoching.reason);
     end
 
+    helpers.logmsg(sub_log, 'TOTAL subject runtime: %.2f min', toc(t_sub)/60);
     helpers.logmsg(sub_log, '--- END sub-%s OK ---', subj_id);
     out.ok = true;
 
@@ -631,6 +703,224 @@ catch me
         end
     catch
     end
+end
+end
+
+%% ========================================================================
+%  PREPLAN / STEP FOLDER DECISION LOGIC
+% ========================================================================
+function subject_plans = build_subject_plans(cfg, sub_ids, helpers, master_log)
+
+step_names = { ...
+    'prep02_triggerfix', ...
+    'prep03_untilica', ...
+    'prep04_ica', ...
+    'prep05_after_ica', ...
+    'prep06_epoching'};
+
+subject_plans = repmat(struct( ...
+    'subj_id', '', ...
+    'any_step_to_run', false, ...
+    'steps', struct()), numel(sub_ids), 1);
+
+for i = 1:numel(sub_ids)
+    subj_id = sub_ids{i};
+    paths = build_paths(cfg, subj_id);
+
+    P = struct();
+    P.subj_id = subj_id;
+    P.any_step_to_run = false;
+    P.steps = struct();
+
+    % ---- first pass: independent decision per step ----
+    for s = 1:numel(step_names)
+        step_name = step_names{s};
+        step_cfg = cfg.steps.(step_name);
+
+        info = struct();
+        info.run = false;
+        info.reason = "step disabled";
+        info.step_folder = "";
+        info.folder_info = struct();
+        info.delete_before_run = false;
+        info.policy = struct();
+
+        if ~step_cfg.run
+            P.steps.(step_name) = info;
+            continue;
+        end
+
+        policy = resolve_overwrite_policy(cfg, step_cfg);
+        step_folder = get_step_subject_folder(paths, step_name);
+
+        [do_run, reason, folder_info] = step_should_run_from_folder(step_folder, policy);
+
+        info.run = do_run;
+        info.reason = reason;
+        info.step_folder = step_folder;
+        info.folder_info = folder_info;
+        info.policy = policy;
+
+        % delete before run only if a non-empty existing folder should be regenerated
+        info.delete_before_run = do_run && folder_info.exists && ~folder_info.is_empty;
+
+        P.steps.(step_name) = info;
+    end
+
+    % ---- second pass: propagate downstream reruns ----
+    P = propagate_downstream_reruns(P, step_names);
+
+    % ---- subject-level flag ----
+    run_flags = false(1, numel(step_names));
+    for s = 1:numel(step_names)
+        run_flags(s) = P.steps.(step_names{s}).run;
+    end
+    P.any_step_to_run = any(run_flags);
+
+    subject_plans(i) = P;
+
+    helpers.logmsg(master_log, ...
+        'Preplan sub-%s | 02=%d | 03=%d | 04=%d | 05=%d | 06=%d', ...
+        subj_id, ...
+        P.steps.prep02_triggerfix.run, ...
+        P.steps.prep03_untilica.run, ...
+        P.steps.prep04_ica.run, ...
+        P.steps.prep05_after_ica.run, ...
+        P.steps.prep06_epoching.run);
+end
+end
+
+function P = propagate_downstream_reruns(P, step_names)
+
+triggered = false;
+
+for s = 1:numel(step_names)
+    step_name = step_names{s};
+    info = P.steps.(step_name);
+
+    if info.run
+        triggered = true;
+        P.steps.(step_name) = info;
+        continue;
+    end
+
+    if triggered
+        % rerun all later enabled steps because upstream changed
+        if isfield(info, 'policy') && ~isempty(info.policy)
+            info.run = true;
+            info.reason = "rerun forced because earlier enabled step will be regenerated";
+            if isfield(info,'folder_info') && isstruct(info.folder_info) && ...
+                    isfield(info.folder_info,'exists') && isfield(info.folder_info,'is_empty')
+                info.delete_before_run = info.folder_info.exists && ~info.folder_info.is_empty;
+            else
+                info.delete_before_run = false;
+            end
+            P.steps.(step_name) = info;
+        end
+    end
+end
+end
+
+function maybe_clear_step_folder(paths, step_name, subject_plan, helpers, cfg, log_file)
+
+info = subject_plan.steps.(step_name);
+if ~info.delete_before_run
+    return;
+end
+
+step_folder = get_step_subject_folder(paths, step_name);
+
+if cfg.io.dry_run
+    helpers.logmsg(log_file, 'DRY RUN: would clear step folder before rerun: %s', step_folder);
+    return;
+end
+
+helpers.logmsg(log_file, 'Clearing step folder before rerun: %s', step_folder);
+clear_directory_contents(step_folder);
+end
+
+function step_folder = get_step_subject_folder(paths, step_name)
+
+switch step_name
+    case 'prep02_triggerfix'
+        step_folder = paths.prep02_out_dir;
+
+    case 'prep03_untilica'
+        step_folder = paths.prep03_out_dir_untilica;
+
+    case 'prep04_ica'
+        step_folder = paths.prep04_out_dir;
+
+    case 'prep05_after_ica'
+        step_folder = paths.prep05_out_dir;
+
+    case 'prep06_epoching'
+        step_folder = paths.prep06_out_dir;
+
+    otherwise
+        error('Unknown step name: %s', step_name);
+end
+end
+
+function [do_run, reason, info] = step_should_run_from_folder(step_folder, policy)
+
+info = struct();
+info.exists = false;
+info.datenum = NaN;
+info.is_empty = true;
+
+step_folder = char(string(step_folder));
+
+if exist(step_folder, 'dir') ~= 7
+    do_run = true;
+    reason = "output folder missing -> run";
+    return;
+end
+
+info.exists = true;
+
+d = dir(step_folder);
+names = {d.name};
+is_real = ~ismember(names, {'.','..'});
+d_real = d(is_real);
+
+info.is_empty = isempty(d_real);
+
+folder_info = dir(step_folder);
+if ~isempty(folder_info)
+    info.datenum = folder_info.datenum;
+end
+
+if info.is_empty
+    do_run = true;
+    reason = "output folder exists but is empty -> run";
+    return;
+end
+
+switch policy.mode
+    case "skip"
+        do_run = false;
+        reason = "output folder exists and non-empty -> skip";
+
+    case "delete"
+        do_run = true;
+        reason = "output folder exists and non-empty -> delete + regenerate";
+
+    case "if_older_than"
+        if isnan(info.datenum)
+            do_run = true;
+            reason = "folder date unavailable -> regenerate";
+        elseif info.datenum < policy.cutoff_datenum
+            do_run = true;
+            reason = "output folder older than cutoff -> delete + regenerate";
+        else
+            do_run = false;
+            reason = "output folder newer than cutoff -> skip";
+        end
+
+    otherwise
+        do_run = true;
+        reason = "unknown policy -> regenerate";
 end
 end
 
@@ -838,7 +1128,6 @@ switch machine_kind
         n_workers = 2;
 
     case "hpc_hummel"
-        % keep Hummel logic unchanged
         tmp = get_slurm_cpus_per_task();
         if ~isempty(tmp)
             n_workers = tmp;
@@ -868,7 +1157,6 @@ end
 
 n_workers = max(1, round(n_workers));
 
-% clamp on Windows local/server to local cluster limit if possible
 if ~strcmp(machine_kind, "hpc_hummel")
     try
         cl = parcluster('local');
@@ -898,9 +1186,13 @@ helpers.logmsg_default = @(varargin) logmsg_impl(default_log_file, varargin{:});
 helpers.ensure_dir = @ensure_dir;
 helpers.get_slurm_cpus_per_task = @get_slurm_cpus_per_task;
 
-% Overwrite / output policy helpers
-helpers.resolve_overwrite_mode    = @resolve_overwrite_mode;
-helpers.step_should_run_outputs   = @step_should_run_outputs;
+% Old + new overwrite / planning helpers
+helpers.resolve_overwrite_mode      = @resolve_overwrite_mode;      % backward compatible
+helpers.resolve_overwrite_policy    = @resolve_overwrite_policy;    % new
+helpers.step_should_run_outputs     = @step_should_run_outputs;     % backward compatible old file-based helper
+helpers.step_should_run_from_folder = @step_should_run_from_folder; % new folder-based helper
+helpers.clear_directory_contents    = @clear_directory_contents;
+
 helpers.safe_delete_set           = @safe_delete_set;
 helpers.safe_saveset              = @safe_saveset;
 helpers.safe_loadset              = @safe_loadset;
@@ -951,6 +1243,29 @@ if ~exist(pth,'dir')
 end
 end
 
+function clear_directory_contents(pth)
+
+pth = char(string(pth));
+
+if exist(pth,'dir') ~= 7
+    return;
+end
+
+d = dir(pth);
+names = {d.name};
+is_real = ~ismember(names, {'.','..'});
+d = d(is_real);
+
+for k = 1:numel(d)
+    f = fullfile(pth, d(k).name);
+    if d(k).isdir
+        rmdir(f, 's');
+    else
+        delete(f);
+    end
+end
+end
+
 function n_workers = get_slurm_cpus_per_task()
 n_workers = [];
 val = getenv('SLURM_CPUS_PER_TASK');
@@ -984,19 +1299,99 @@ end
 end
 
 %% ========================================================================
-%  HELPER: overwrite resolution + output existence checks
+%  OVERWRITE / POLICY HELPERS
 % ========================================================================
 function overwrite_mode = resolve_overwrite_mode(cfg, step_overwrite_mode)
+% backward-compatible old helper
 overwrite_mode = string(cfg.io.overwrite_mode);
 if nargin >= 2 && strlength(string(step_overwrite_mode)) > 0
     overwrite_mode = string(step_overwrite_mode);
 end
-if overwrite_mode ~= "delete" && overwrite_mode ~= "skip"
+if overwrite_mode ~= "delete" && overwrite_mode ~= "skip" && overwrite_mode ~= "if_older_than"
     overwrite_mode = "delete";
 end
 end
 
+function policy = resolve_overwrite_policy(cfg, step_cfg)
+
+policy = struct();
+policy.mode = string(cfg.io.overwrite_mode);
+policy.cutoff_raw = "";
+policy.cutoff_datenum = NaN;
+
+if isfield(cfg,'io') && isfield(cfg.io,'overwrite_if_older_than')
+    policy.cutoff_raw = string(cfg.io.overwrite_if_older_than);
+end
+
+if nargin >= 2 && isstruct(step_cfg)
+    if isfield(step_cfg,'overwrite_mode') && strlength(string(step_cfg.overwrite_mode)) > 0
+        policy.mode = string(step_cfg.overwrite_mode);
+    end
+    if isfield(step_cfg,'overwrite_if_older_than') && strlength(string(step_cfg.overwrite_if_older_than)) > 0
+        policy.cutoff_raw = string(step_cfg.overwrite_if_older_than);
+    end
+end
+
+if ~ismember(policy.mode, ["delete","skip","if_older_than"])
+    policy.mode = "delete";
+end
+
+if policy.mode == "if_older_than"
+    policy.cutoff_datenum = parse_cutoff_to_datenum(policy.cutoff_raw);
+    if isnan(policy.cutoff_datenum)
+        error('overwrite_mode="if_older_than" requires a valid cutoff date. Got: %s', policy.cutoff_raw);
+    end
+end
+end
+
+function dn = parse_cutoff_to_datenum(x)
+
+dn = NaN;
+
+if nargin < 1 || isempty(x)
+    return;
+end
+
+if isnumeric(x) && isscalar(x) && isfinite(x)
+    dn = x;
+    return;
+end
+
+x = char(string(x));
+x = strtrim(x);
+
+if isempty(x)
+    return;
+end
+
+fmts = { ...
+    'yyyy-mm-dd HH:MM:SS', ...
+    'yyyy-mm-dd HH:MM', ...
+    'yyyy-mm-dd', ...
+    'dd.mm.yyyy HH:MM:SS', ...
+    'dd.mm.yyyy HH:MM', ...
+    'dd.mm.yyyy'};
+
+for k = 1:numel(fmts)
+    try
+        dn = datenum(x, fmts{k});
+        if ~isnan(dn)
+            return;
+        end
+    catch
+    end
+end
+
+try
+    dn = datenum(datetime(x));
+catch
+end
+end
+
 function [do_run, reason, needs_regen] = step_should_run_outputs(out_files, overwrite_mode, cfg)
+% backward-compatible old helper (file-based)
+% If overwrite_mode == "if_older_than", fallback behavior is:
+% treat existing files as "skip" because no cutoff is available in this old signature.
 needs_regen = false;
 
 if nargin < 1 || isempty(out_files)
@@ -1028,7 +1423,7 @@ if n_exist == 0
 end
 
 if n_exist == numel(out_files)
-    if overwrite_mode == "skip"
+    if overwrite_mode == "skip" || overwrite_mode == "if_older_than"
         do_run = false;
         reason = "all outputs exist -> skip";
         return;
@@ -1778,9 +2173,6 @@ end
 end
 
 function mode = detect_env_mode()
-% Priority:
-%  1) explicit override via PROOF_ENV_MODE
-%  2) machine kind detection
 v = string(getenv('PROOF_ENV_MODE'));
 v = lower(strtrim(v));
 if v == "pc" || v == "server" || v == "hpc"
@@ -1928,9 +2320,6 @@ end
 end
 
 function [vhdr_dir, vhdr_name] = find_bids_vhdr(paths, subj_id, helpers)
-% FIND_BIDS_VHDR
-% Prefer task-matching BIDS vhdr in paths.bids_ses_dir/eeg.
-% If multiple candidates exist, pick most recent.
 
 vhdr_dir  = '';
 vhdr_name = '';
