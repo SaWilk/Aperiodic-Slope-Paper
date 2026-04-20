@@ -21,7 +21,7 @@ clear; clc;
 
 %% ================= CONFIG =================
 root     = 'Z:\pb\KPP_KPN_joined\Aperiodic\Saskia';
-rawDir   = fullfile(root, 'rawdata');
+rawDir   = fullfile(root, 'sourcedata');
 derivDir = fullfile(root, 'derivatives');
 
 fooofRoot = fullfile(derivDir, '08_fooof');
@@ -672,7 +672,7 @@ end
 set(ax,'XScale','log','YScale','log');
 xlabel(ax,'Frequency (Hz)');
 ylabel(ax,'PSD');
-grid(ax,'on');
+grid(ax,'off');
 
 xt = [1 2 3 5 8 10 15 20 30 40];
 xt = xt(xt>=min(freqsRef) & xt<=max(freqsRef));
